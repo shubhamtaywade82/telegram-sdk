@@ -248,7 +248,7 @@ npm run docs        # TypeDoc API reference -> docs/api
 | pq factorization | known semiprimes; DH params: published prime, bad-value rejection |
 | 2FA SRP | client M1 accepted by an independent server-side implementation |
 | TL runtime | flags round-trips, vectors, nested entities, gzip transparency, error cases |
-| Transports | abridged (incl. 0x7f escape + split chunks), intermediate, full (+CRC tamper) |
+| Transports | abridged (incl. 0x7f escape + split chunks), intermediate, full (+CRC tamper + IEEE check-value vector) |
 | Messages | unencrypted/encrypted packing, x=0/x=8 key schedules, seq_no progression |
 | Handshake | full mock-server exchange, new+legacy RSA, unknown-fingerprint failure |
 | Login | end-to-end encrypted RPC login incl. 2FA against a mock server; session round-trip |

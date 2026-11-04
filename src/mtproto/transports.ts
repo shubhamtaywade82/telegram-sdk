@@ -11,7 +11,28 @@
  * @module
  */
 
-import { crc32 } from 'node:zlib';
+/**
+ * CRC-32 (IEEE 802.3, reflected polynomial 0xEDB88320) — bit-for-bit identical
+ * to `zlib.crc32()`. Implemented locally because `node:zlib` did not export
+ * `crc32` until Node.js 20.15.0/22.2.0, while this SDK supports Node >= 18.17.
+ */
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(data: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    c = CRC32_TABLE[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
 
 export type TransportName = 'abridged' | 'intermediate' | 'full';
 

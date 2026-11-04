@@ -45,8 +45,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "codegen": "node scripts/codegen.mjs",
-    "test": "npm run build && node --test --test-timeout=20000 dist/tests/*.test.js",
-    "test:live": "npm run build && MTPROTO_LIVE=1 node --test --test-timeout=20000 dist/tests/*.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:live": "npm run build && MTPROTO_LIVE=1 node --test dist/tests/live.test.js",
     "docs": "typedoc",
     "prepublishOnly": "npm run build",
     "extract:rsa": "node scripts/extract-rsa-keys.mjs"

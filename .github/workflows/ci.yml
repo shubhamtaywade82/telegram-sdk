@@ -30,7 +30,8 @@ jobs:
         run: npm run build
 
       - name: Unit + mock-server tests
-        run: node --test --test-timeout=20000 dist/tests/*.test.js
+        run: node --test dist/tests/*.test.js
+        timeout-minutes: 5
 
       - name: Docs build
         if: matrix.node-version == 22
@@ -51,6 +52,7 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: node --test --test-timeout=30000 dist/tests/live.test.js
+      - run: node --test dist/tests/live.test.js
+        timeout-minutes: 5
         env:
           MTPROTO_LIVE: '1'

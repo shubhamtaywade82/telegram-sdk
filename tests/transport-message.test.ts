@@ -46,6 +46,32 @@ test('full: round-trip + CRC tamper detection', () => {
   assert.throws(() => t.feed(frame), /CRC32/);
 });
 
+test('full: CRC32 is standard IEEE (independent implementation + check value)', () => {
+  // Independent table-based CRC-32/IEEE in the test, itself pinned by the
+  // canonical check value crc32('123456789') = 0xCBF43926, then compared
+  // against the CRC the transport actually puts on the wire.
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  const crc32 = (data: Uint8Array): number => {
+    let c = 0xffffffff;
+    for (const b of data) c = table[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);
+
+  const t = createTransport('full');
+  for (const size of [0, 1, 7, 48, 256]) {
+    const payload = secureRandom(size);
+    const frame = Buffer.from(t.encode(payload));
+    const len = frame.readInt32LE(0);
+    assert.equal(frame.readUInt32LE(4 + len), crc32(frame.subarray(0, 4 + len)));
+  }
+});
+
 test('unencrypted message round-trip', () => {
   const session = new MTProtoSession();
   const body = sdk.serializeTLObject(sdk.tl('resPQ', { nonce: 1n, server_nonce: 2n, pq: new Uint8Array([9]), server_public_key_fingerprints: [3n] })).toBuffer();
