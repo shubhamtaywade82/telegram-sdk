@@ -190,3 +190,16 @@ Tests use injected Fetch implementations; no real bot token or network access is
 ## License
 
 MIT
+
+
+## Existing MTProto implementations
+
+Do not start by implementing MTProto cryptography and authorization from scratch.
+
+- **teleproto** is an actively maintained TypeScript MTProto implementation and a GramJS-compatible fork. It exposes a typed schema-level API and currently publishes independently versioned schema-layer releases. Evaluate it as the implementation behind a future optional adapter: https://github.com/sanyok12345/teleproto
+- **GramJS** (`telegram` on npm) is deprecated; its repository was archived on July 14, 2026. Do not select the archived package for new work.
+- **TDLib** is Telegram's official client library. It is the conservative choice where matching official client behavior matters more than avoiding a native/WASM bridge.
+
+There is a version-alignment detail to verify before adopting teleproto: Telegram's public schema page currently displays Layer 225, while teleproto's current package documentation describes a 1.232.x release as TL layer 232. Treat the library's generated layer and Telegram's public schema snapshot as separate versioned inputs; inspect the actual generated schema and compatibility notes rather than assuming the numbers match.
+
+The current `./mtproto/tl` source is only educational/protocol groundwork. The roadmap does not promise a custom encrypted MTProto implementation. A production MTProto backend should initially be an optional adapter over teleproto or TDLib, with credentials/session storage and lifecycle behind a narrow interface.
