@@ -1,25 +1,68 @@
 {
-  "name": "@nemesis-oss/telegram-sdk",
+  "name": "mtproto-sdk",
   "version": "0.1.0",
-  "description": "A TypeScript Telegram SDK with a Bot API client and MTProto/TL foundation.",
+  "description": "TypeScript SDK for Telegram's MTProto 2.0 client API: TL schema runtime, transports + auth-key handshake, user login (SMS + 2FA SRP) and bot login, messaging, media, updates - plus a Bot-API-compatible facade.",
+  "keywords": [
+    "telegram",
+    "mtproto",
+    "mtproto-sdk",
+    "telegram-api",
+    "tl-schema",
+    "typescript",
+    "userbot",
+    "bot-api",
+    "telegram-sdk"
+  ],
   "license": "MIT",
+  "author": "shubhamtaywade82",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shubhamtaywade82/telegram-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shubhamtaywade82/telegram-sdk/issues"
+  },
   "type": "module",
-  "sideEffects": false,
-  "engines": { "node": ">=20.3.0" },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./bot-api": { "types": "./dist/bot-api/index.d.ts", "import": "./dist/bot-api/index.js" },
-    "./mtproto/tl": { "types": "./dist/mtproto/tl/index.d.ts", "import": "./dist/mtproto/tl/index.js" },
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE", "docs"],
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
-    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
-    "check": "npm run typecheck && npm test",
-    "pack:dry": "npm pack --dry-run"
+    "codegen": "node scripts/codegen.mjs",
+    "test": "npm run build && node --test --test-timeout=20000 dist/tests/*.test.js",
+    "test:live": "npm run build && MTPROTO_LIVE=1 node --test --test-timeout=20000 dist/tests/*.test.js",
+    "docs": "typedoc",
+    "prepublishOnly": "npm run build",
+    "extract:rsa": "node scripts/extract-rsa-keys.mjs"
   },
-  "devDependencies": { "typescript": "^5.8.3" }
+  "peerDependencies": {
+    "@nemesis-oss/tg-format": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@nemesis-oss/tg-format": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typedoc": "^0.28.0",
+    "typescript": "^5.6.0"
+  }
 }

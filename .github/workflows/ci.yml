@@ -2,25 +2,55 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
-
-permissions:
-  contents: read
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node: [20, 22, 24]
+        node-version: [18, 20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-      - run: npm install
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm pack --dry-run
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit + mock-server tests
+        run: node --test --test-timeout=20000 dist/tests/*.test.js
+
+      - name: Docs build
+        if: matrix.node-version == 22
+        run: npm run docs
+
+  live-handshake:
+    # The real end-to-end check: a full auth-key handshake with a production
+    # Telegram datacenter. No account needed (the handshake is pre-auth).
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: node --test --test-timeout=30000 dist/tests/live.test.js
+        env:
+          MTPROTO_LIVE: '1'

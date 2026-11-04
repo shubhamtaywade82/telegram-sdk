@@ -3,19 +3,19 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "rootDir": "src",
-    "outDir": "dist",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "useUnknownInCatchVariables": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "verbatimModuleSyntax": true
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src", "tests"],
+  "exclude": ["scripts", "examples", "dist", "node_modules", "docs"]
 }
