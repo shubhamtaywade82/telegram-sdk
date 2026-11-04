@@ -1,5 +1,14 @@
 # MTProto implementation roadmap
 
+> **Status (2026-11-04):** The scope gate has been satisfied. Phases 0–4 are implemented and
+> tested in this repository — TL runtime with the pinned Layer 232 schema, AES-IGE / RSA_PAD /
+> DH / SRP crypto, transports and the auth-key handshake, RPC with sessions and persistence,
+> and phone/SMS + 2FA SRP + bot-token login. Phase 5 is partially implemented (peer resolution,
+> dialogs/history, send, chunked media, update polling via `updates.getDifference`); secret
+> chats, calls and E2E features remain out of scope as planned. See `CHANGELOG.md` for the
+> shipped feature set and `tests/` for the conformance suites (known-answer vectors plus
+> simulated-server integration tests, and an opt-in live handshake with production DC2).
+
 ## Scope gate
 
 The v0.1.0 package is not a full MTProto client. Do not expose TelegramClient until encrypted RPC, auth, updates and persistence pass independent conformance tests.

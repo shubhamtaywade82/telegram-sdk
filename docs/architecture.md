@@ -37,3 +37,15 @@ Do not use contractful-ts as the MTProto runtime. It is a generic HTTP/WebSocket
 ## telegram-format boundary
 
 No formatter package dependency is required. The SDK accepts a structural FormattedText object. The formatter owns parsing/escaping and UTF-16 entity offsets; the SDK owns network serialization and Telegram API errors.
+
+## Update (2026-11-04)
+
+The implemented architecture supersedes the fetch-based Bot API boundary described above.
+`src/` now contains the full MTProto 2.0 stack: TL runtime and generated Layer 232 schema
+(`src/tl`), crypto (`src/crypto`), transports/handshake (`src/mtproto`), RPC and
+`TelegramClient` with sessions (`src/rpc.ts`, `src/client`), feature modules
+(`src/modules`) and a Bot-API-compatible facade over MTProto (`src/bot`). The design rules
+above still apply (separate protocols at the facade level, formatting independent of
+transport, no credential leakage, no automatic replays, injectable transports, pinned
+schema artifacts); see the README for the current layer diagram and `CHANGELOG.md` for the
+shipped feature set.

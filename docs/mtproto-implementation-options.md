@@ -34,3 +34,13 @@ Define an internal interface in this repository (for example, connect, authorize
 - Bot notifications and automation: use this repository's Bot API client.
 - User-account/full Telegram client: prefer an optional teleproto adapter after the validation gate; choose TDLib if official-client parity is more important than a pure TypeScript deployment.
 - Custom implementation: defer until a measurable requirement justifies owning the cryptographic and protocol surface.
+
+## Update (2026-11-04)
+
+The validation gate above was executed. Outcome: the clean-room, from-spec MTProto
+implementation now lives in this repository (`src/`), and teleproto is used as a **reference
+only** — for byte-level conformance of the server RSA keys, the DH safe-prime whitelist and
+TL encodings (`scripts/extract-rsa-keys.mjs` re-verifies both) — never as a dependency. The
+evaluation rationale is documented in the README ("Why this exists"). The Bot-API-compatible
+surface is now a facade implemented over the MTProto core (`src/bot/bot-api.ts`) rather than
+a separate HTTP client.
