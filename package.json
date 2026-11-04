@@ -1,0 +1,25 @@
+{
+  "name": "@nemesis-oss/telegram-sdk",
+  "version": "0.1.0",
+  "description": "A TypeScript Telegram SDK with a Bot API client and MTProto/TL foundation.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": { "node": ">=20.3.0" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./bot-api": { "types": "./dist/bot-api/index.d.ts", "import": "./dist/bot-api/index.js" },
+    "./mtproto/tl": { "types": "./dist/mtproto/tl/index.d.ts", "import": "./dist/mtproto/tl/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE", "docs"],
+  "scripts": {
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "devDependencies": { "typescript": "^5.8.3" }
+}
