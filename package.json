@@ -1,6 +1,6 @@
 {
   "name": "mtproto-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for Telegram's MTProto 2.0 client API: TL schema runtime, transports + auth-key handshake, user login (SMS + 2FA SRP) and bot login, messaging, media, updates - plus a Bot-API-compatible facade.",
   "keywords": [
     "telegram",
@@ -48,7 +48,7 @@
     "test": "npm run build && node --test dist/tests/*.test.js",
     "test:live": "npm run build && MTPROTO_LIVE=1 node --test dist/tests/live.test.js",
     "docs": "typedoc",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm test",
     "extract:rsa": "node scripts/extract-rsa-keys.mjs"
   },
   "peerDependencies": {
@@ -60,7 +60,7 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^18.19.0",
     "tsx": "^4.19.0",
     "typedoc": "^0.28.0",
     "typescript": "^5.6.0"

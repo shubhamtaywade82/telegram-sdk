@@ -3,6 +3,8 @@
  * Code generator: parses the TL schemas (src/tl/api.tl, src/tl/core.tl) and
  * emits descriptor tables (src/tl/schema-all.ts, src/tl/schema-core.ts).
  *
+ * The layer version is parsed from the `// LAYER NNN` header of api.tl.
+ *
  * Run: node scripts/codegen.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -10,7 +12,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const LAYER = 232;
+
+// read the layer from the pinned schema instead of hardcoding it
+const API_TL = readFileSync(join(root, 'src/tl/api.tl'), 'utf8');
+const LAYER_MATCH = new RegExp('^//\\s*LAYER\\s+(\\d+)\\s*$', 'm').exec(API_TL);
+if (!LAYER_MATCH) {
+  throw new Error('src/tl/api.tl is missing a `// LAYER NNN` header line');
+}
+const LAYER = Number(LAYER_MATCH[1]);
 
 // Binary fields in the CORE schema are declared as `string` but carry raw
 // bytes on the wire; rewrite them to `bytes` so the runtime returns
@@ -32,6 +41,7 @@ function parseTl(path, isCore) {
   const text = readFileSync(path, 'utf8');
   const out = { constructors: [], methods: [] };
   let mode = 'constructors';
+  let skipped = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
@@ -43,13 +53,22 @@ function parseTl(path, isCore) {
     if (line.startsWith('gzip_packed')) continue;
     if (/\{\w+:Type\}/.test(line)) continue; // generic wrapper declarations (invokeWithLayer & friends)
     const eq = line.indexOf('=');
-    if (eq < 0) continue;
+    const hash = line.indexOf('#');
+    if (eq < 0 || hash < 0 || hash > eq) {
+      skipped += 1;
+      console.warn(`codegen: skipping unrecognized line in ${path}: ${line}`);
+      continue;
+    }
     const left = line.slice(0, eq).trim();
     const right = line.slice(eq + 1).split(';')[0].trim();
-    const hash = left.indexOf('#');
-    if (hash < 0) continue;
-    const name = left.slice(0, hash).trim();
-    const rest = left.slice(hash + 1).trim();
+    const hashIdx = left.indexOf('#');
+    if (hashIdx < 0) {
+      skipped += 1;
+      console.warn(`codegen: skipping line without constructor id in ${path}: ${line}`);
+      continue;
+    }
+    const name = left.slice(0, hashIdx).trim();
+    const rest = left.slice(hashIdx + 1).trim();
     const sp = rest.indexOf(' ');
     const idHex = (sp < 0 ? rest : rest.slice(0, sp)).trim();
     const argsStr = sp < 0 ? '' : rest.slice(sp + 1).trim();
@@ -69,6 +88,7 @@ function parseTl(path, isCore) {
     }
     out[mode].push({ id, name, type: right, args });
   }
+  if (skipped > 0) console.warn(`codegen: ${skipped} line(s) skipped in ${path}`);
   return out;
 }
 
