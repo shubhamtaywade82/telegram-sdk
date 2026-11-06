@@ -112,6 +112,8 @@ class MockLoginServer {
   private twoFa: TwoFaState | null = null;
   private readonly password = 'secret123';
   m1Verified: boolean | null = null;
+  /** When set, the next encrypted request is answered with bad_server_salt. */
+  rotateSaltOnce: bigint | null = null;
 
   constructor() {
     const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -365,6 +367,27 @@ class MockLoginServer {
       0,
     );
     if (this.clientSessionId === null) this.clientSessionId = msg.sessionId;
+
+    // optional one-shot salt rotation: answer with bad_server_salt (a service
+    // message, not an rpc_result) exactly like the real server does
+    if (this.rotateSaltOnce !== null) {
+      const newSalt = this.rotateSaltOnce;
+      this.rotateSaltOnce = null;
+      this.sendEncrypted(
+        sdk
+          .serializeTLObject(
+            sdk.tl('bad_server_salt', {
+              bad_msg_id: msg.msgId,
+              bad_msg_seqno: msg.seqNo,
+              error_code: 48,
+              new_server_salt: newSalt,
+            }),
+          )
+          .toBuffer(),
+      );
+      return;
+    }
+
     const obj = sdk.parseTLObject(new TLReader(msg.body));
     const reqMsgId = msg.msgId;
 
@@ -572,6 +595,34 @@ test('session export/apply round-trip', async () => {
     assert.ok(restored.session.authKey);
     assert.deepEqual(Buffer.from(restored.session.authKey!), Buffer.from(client.session.authKey!));
     assert.equal(restored.session.serverSalt, client.session.serverSalt);
+  } finally {
+    await client.disconnect();
+    mock.stop();
+  }
+});
+
+test('bad_server_salt: pending call fails retryably and the session adopts the new salt', async () => {
+  const mock = new MockLoginServer();
+  mock.rotateSaltOnce = 0x0123456789abcdefn;
+  const port = await mock.start();
+  const client = new TelegramClient({
+    apiId: 12345,
+    apiHash: '0123456789abcdef0123456789abcdef',
+    host: '127.0.0.1',
+    port,
+    dcId: 2,
+  });
+  try {
+    await client.connect([mock.rsaKey]);
+    mock.clientSessionId = client.session.sessionId;
+
+    await assert.rejects(
+      () => client.invoke(sdk.tlMethod('updates.getState', {})),
+      (err: unknown) =>
+        err instanceof Error && /bad_server_salt/.test(err.message) && /retried/.test(err.message),
+    );
+    // the rotated salt from the service message must be in effect
+    assert.equal(client.session.serverSalt, 0x0123456789abcdefn);
   } finally {
     await client.disconnect();
     mock.stop();
