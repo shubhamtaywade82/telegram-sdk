@@ -58,7 +58,7 @@ function tlStr(bytes: Uint8Array): Uint8Array {
 function fingerprintOf(nBytes: Uint8Array, eBytes: Uint8Array): bigint {
   const d = sha1(concat(tlStr(nBytes), tlStr(eBytes)));
   let v = 0n;
-  for (let i = 0; i < 8; i++) v |= BigInt(d[12 + i]) << BigInt(8 * i);
+  for (let i = 0; i < 8; i++) v |= BigInt(d[12 + i]!) << BigInt(8 * i);
   return BigInt.asIntN(64, v);
 }
 
@@ -166,12 +166,12 @@ class MockHandshakeServer {
     const aes = m.subarray(32, 256);
     const tempKey = new Uint8Array(32);
     const shaAes = sha256(aes);
-    for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i] ^ shaAes[i];
+    for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i]! ^ shaAes[i]!;
     const plain = ige256Decrypt(aes, tempKey, zero32);
     const dataPadReversed = plain.subarray(0, 192);
     const digest = plain.subarray(192, 224);
     const dataWithPadding = new Uint8Array(192);
-    for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i];
+    for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i]!;
     if (bytesToHex(digest) === bytesToHex(sha256(concat(tempKey, dataWithPadding)))) {
       try {
         const inner = sdk.parseTLObject(new TLReader(dataWithPadding));
@@ -195,7 +195,13 @@ class MockHandshakeServer {
   }
 
   private handle(payload: Uint8Array): void {
-    const { body } = parseUnencryptedMessage(new TLReader(payload));
+    const { msgId, body } = parseUnencryptedMessage(new TLReader(payload));
+    // conformance: a real server rejects invalid client msg_ids outright
+    assert.ok(msgId % 4n === 0n, `client msg_id ${msgId} must be divisible by 4`);
+    const highBits = msgId >> 32n;
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
+    const drift = highBits > nowSec ? highBits - nowSec : nowSec - highBits;
+    assert.ok(drift < 60n, `client msg_id ${msgId} does not approximate unixtime*2^32 (drift ${drift}s)`);
     if (body.length === 4) {
       const code = new TLReader(body).readInt();
       if (code < 0) throw new Error(`mock server received error ${code}`);
@@ -254,7 +260,7 @@ class MockHandshakeServer {
       }
       assert.ok(g >= 2, 'mock could not pick a generator');
       const aBytes = secureRandom(256);
-      aBytes[0] |= 0x80;
+      aBytes[0] = (aBytes[0] ?? 0) | 0x80;
       this.state.a = bigFromBytesBE(aBytes);
       this.state.dhPrime = dhPrime;
       this.state.g = g;
@@ -341,7 +347,7 @@ test('full handshake against a mock server (new RSA scheme)', async () => {
     const nn = le(mock.state.newNonce!, 32);
     const sn = le(mock.state.serverNonce!, 16);
     const salt = new Uint8Array(8);
-    for (let i = 0; i < 8; i++) salt[i] = nn[i] ^ sn[i];
+    for (let i = 0; i < 8; i++) salt[i] = nn[i]! ^ sn[i]!;
     assert.equal(result.serverSalt, new TLReader(salt).readLong());
   } finally {
     conn.close();

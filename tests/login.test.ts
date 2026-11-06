@@ -9,19 +9,21 @@ import assert from 'node:assert/strict';
 import { constants, createHash, generateKeyPairSync, pbkdf2Sync, privateDecrypt, type KeyObject } from 'node:crypto';
 import { Server as TcpServer, type Socket } from 'node:net';
 import { createTransport } from '../src/mtproto/transports.js';
-import { MTProtoConnection } from '../src/mtproto/connection.js';
 import { MTProtoSession } from '../src/mtproto/session.js';
-import { createAuthKey } from '../src/mtproto/auth-key.js';
 import { parseUnencryptedMessage, parseEncryptedMessage } from '../src/mtproto/message.js';
-import { packEncryptedMessage } from '../src/mtproto/message.js';
 import { ige256Decrypt, ige256Encrypt } from '../src/crypto/ige.js';
 import type { TelegramRsaKey } from '../src/crypto/rsa.js';
-import { RPC_RESULT_ID } from '../src/rpc.js';
 import { TLReader, TLWriter } from '../src/binary.js';
 import * as sdk from '../src/index.js';
 import { TelegramClient } from '../src/client/telegram-client.js';
 import { loginUser } from '../src/client/auth-flows.js';
 import { bigFromBytesBE, bytesFromBigBE, bytesToHex, hexToBytes, modPow, secureRandom } from '../src/utils.js';
+
+// Protocol constants declared INDEPENDENTLY of src/rpc.js (conformance:
+// the mock must be allowed to disagree with the client under test).
+const RPC_RESULT_ID = 0xf35c6d01; // rpc_result#f35c6d01 (core.tl)
+const INVOKE_WITH_LAYER_ID = 0xda9b0d0d; // invokeWithLayer#da9b0d0d (api.tl)
+const INIT_CONNECTION_ID = 0xc1cd5ea9; // initConnection#c1cd5ea9 (api.tl)
 
 const KNOWN_PRIME_HEX =
   'c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b';
@@ -62,7 +64,7 @@ function tlStr(bytes: Uint8Array): Uint8Array {
 function fingerprintOf(nBytes: Uint8Array, eBytes: Uint8Array): bigint {
   const d = sha1(concat(tlStr(nBytes), tlStr(eBytes)));
   let v = 0n;
-  for (let i = 0; i < 8; i++) v |= BigInt(d[12 + i]) << BigInt(8 * i);
+  for (let i = 0; i < 8; i++) v |= BigInt(d[12 + i]!) << BigInt(8 * i);
   return BigInt.asIntN(64, v);
 }
 
@@ -188,12 +190,12 @@ class MockLoginServer {
     const aes = m.subarray(32, 256);
     const tempKey = new Uint8Array(32);
     const shaAes = sha256(aes);
-    for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i] ^ shaAes[i];
+    for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i]! ^ shaAes[i]!;
     const plain = ige256Decrypt(aes, tempKey, zero32);
     const dataPadReversed = plain.subarray(0, 192);
     const digest = plain.subarray(192, 224);
     const dataWithPadding = new Uint8Array(192);
-    for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i];
+    for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i]!;
     if (bytesToHex(digest) === bytesToHex(sha256(concat(tempKey, dataWithPadding)))) {
       try {
         const inner = sdk.parseTLObject(new TLReader(dataWithPadding));
@@ -272,7 +274,7 @@ class MockLoginServer {
       }
       assert.ok(g >= 2, 'mock could not pick a generator');
       const aBytes = secureRandom(256);
-      aBytes[0] |= 0x80;
+      aBytes[0] = (aBytes[0] ?? 0) | 0x80;
       this.a = bigFromBytesBE(aBytes);
       this.dhPrime = dhPrime;
       const gA = modPow(BigInt(g), this.a, dhPrime);
@@ -317,13 +319,13 @@ class MockLoginServer {
       const digest = sha1(this.authKeyBytes);
       const idBytes = digest.subarray(12, 20);
       let id = 0n;
-      for (let i = 0; i < 8; i++) id |= BigInt(idBytes[i]) << BigInt(8 * i);
+      for (let i = 0; i < 8; i++) id |= BigInt(idBytes[i]!) << BigInt(8 * i);
       this.authKeyId = id;
 
       const nn = le(this.newNonce!, 32);
       const sn = le(this.serverNonce!, 16);
       const saltBytes = new Uint8Array(8);
-      for (let i = 0; i < 8; i++) saltBytes[i] = nn[i] ^ sn[i];
+      for (let i = 0; i < 8; i++) saltBytes[i] = nn[i]! ^ sn[i]!;
       this.salt = new TLReader(saltBytes).readLong();
 
       const auxHash = digest.subarray(0, 8);
@@ -366,6 +368,12 @@ class MockLoginServer {
       payload,
       0,
     );
+    // conformance: a real server rejects epoch-1970 or non-mod-4 msg_ids
+    assert.ok(msg.msgId % 4n === 0n, `client msg_id ${msg.msgId} must be divisible by 4`);
+    const highBits = msg.msgId >> 32n;
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
+    const drift = highBits > nowSec ? highBits - nowSec : nowSec - highBits;
+    assert.ok(drift < 60n, `client msg_id ${msg.msgId} does not approximate unixtime*2^32 (drift ${drift}s)`);
     if (this.clientSessionId === null) this.clientSessionId = msg.sessionId;
 
     // optional one-shot salt rotation: answer with bad_server_salt (a service
@@ -373,6 +381,7 @@ class MockLoginServer {
     if (this.rotateSaltOnce !== null) {
       const newSalt = this.rotateSaltOnce;
       this.rotateSaltOnce = null;
+      this.salt = newSalt; // the server packs replies with the new salt
       this.sendEncrypted(
         sdk
           .serializeTLObject(
@@ -388,7 +397,26 @@ class MockLoginServer {
       return;
     }
 
-    const obj = sdk.parseTLObject(new TLReader(msg.body));
+    // unwrap invokeWithLayer(initConnection(...)) exactly like the server
+    const bodyReader = new TLReader(msg.body);
+    let innerBody: Uint8Array = msg.body;
+    const firstId = bodyReader.readUint();
+    if (firstId === INVOKE_WITH_LAYER_ID) {
+      bodyReader.readInt(); // layer
+      const innerId = bodyReader.readUint();
+      assert.equal(innerId, INIT_CONNECTION_ID, 'expected initConnection inside invokeWithLayer');
+      bodyReader.readUint(); // flags
+      bodyReader.readInt(); // api_id
+      bodyReader.readString(); // device_model
+      bodyReader.readString(); // system_version
+      bodyReader.readString(); // app_version
+      bodyReader.readString(); // system_lang_code
+      bodyReader.readString(); // lang_pack
+      bodyReader.readString(); // lang_code
+      innerBody = msg.body.subarray(bodyReader.pos); // the bare inner query
+    }
+
+    const obj = sdk.parseTLObject(new TLReader(innerBody));
     const reqMsgId = msg.msgId;
 
     let result: sdk.TLObject;
@@ -406,16 +434,16 @@ class MockLoginServer {
       case 'account.getPassword':
         this.setup2Fa();
         result = sdk.tl('account.password', {
-          // bit 2 is shared by has_password/current_algo/srp_B/srp_id, so the
-          // placeholder algo must be sent alongside srp_B (as the real server
-          // does when only the "new" SRP algorithm is in use)
-          current_algo: sdk.tl('passwordKdfAlgoUnknown', {}),
-          new_algo: sdk.tl('passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow', {
+          // real-server field layout: current_algo (flags.2) is paired with
+          // srp_B and srp_id and is what login must use; new_algo (always
+          // present, non-conditional) carries salts for SETTING a password
+          current_algo: sdk.tl('passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow', {
             salt1: this.twoFa!.salt1,
             salt2: this.twoFa!.salt2,
             g: this.twoFa!.g,
             p: bytesFromBigBE(this.twoFa!.p, 256),
           }),
+          new_algo: sdk.tl('passwordKdfAlgoUnknown', {}),
           new_secure_algo: sdk.tl('securePasswordKdfAlgoUnknown', {}),
           secure_random: new Uint8Array(32),
           srp_B: bytesFromBigBE(this.twoFa!.gB, 256),
@@ -437,7 +465,7 @@ class MockLoginServer {
         const hp = sha256(be256(this.twoFa!.p));
         const hg = sha256(be256(BigInt(this.twoFa!.g)));
         const hpXorHg = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i] ^ hg[i];
+        for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i]! ^ hg[i]!;
         const serverM1 = sha256(
           concat(hpXorHg, sha256(this.twoFa!.salt1), sha256(this.twoFa!.salt2), be256(gA), be256(gB), kB),
         );
@@ -453,6 +481,21 @@ class MockLoginServer {
             })
           : sdk.tl('rpc_error', { error_code: 400, error_message: 'PASSWORD_HASH_INVALID' });
         break;
+      }
+      case 'updates.getState':
+        result = sdk.tl('updates.state', { pts: 1, qts: 2, date: 3, seq: 4, unread_count: 0 });
+        break;
+      case 'users.getUsers': {
+        // Vector<User> result: exercises parseResult through the RPC path
+        const w = new TLWriter();
+        w.writeUint(RPC_RESULT_ID);
+        w.writeLong(reqMsgId);
+        w.writeUint(sdk.TL_VECTOR_ID);
+        w.writeInt(2);
+        sdk.serializeTLObject(sdk.tl('user', { id: 1n, access_hash: 11n, first_name: 'A', username: 'a' }), w);
+        sdk.serializeTLObject(sdk.tl('user', { id: 2n, access_hash: 22n, first_name: 'B', username: 'b' }), w);
+        this.sendEncrypted(w.toBuffer());
+        return;
       }
       default:
         result = sdk.tl('rpc_error', { error_code: 500, error_message: `mock: ${obj.name} not implemented` });
@@ -527,7 +570,7 @@ class MockLoginServer {
     const v = modPow(BigInt(g), x, p);
     const k = bigFromBytesBE(sha256(concat(be256(p), be256(BigInt(g)))));
     const bBytes = secureRandom(256);
-    bBytes[0] |= 0x80;
+    bBytes[0] = (bBytes[0] ?? 0) | 0x80;
     const b = bigFromBytesBE(bBytes);
     const gB = (k * v + modPow(BigInt(g), b, p)) % p;
     this.twoFa = { v, b, gB, g, p, salt1, salt2 };
@@ -573,35 +616,7 @@ test('login flow over encrypted RPC (incl. 2FA SRP) against a mock server', asyn
   }
 });
 
-test('session export/apply round-trip', async () => {
-  const { exportSessionString } = await import('../src/client/session-store.js');
-  const mock = new MockLoginServer();
-  const port = await mock.start();
-  const client = new TelegramClient({
-    apiId: 12345,
-    apiHash: '0123456789abcdef0123456789abcdef',
-    host: '127.0.0.1',
-    port,
-    dcId: 2,
-  });
-  try {
-    await client.connect([mock.rsaKey]);
-    const string = exportSessionString(client);
-    const restored = new TelegramClient({
-      apiId: 12345,
-      apiHash: '0123456789abcdef0123456789abcdef',
-      session: string,
-    });
-    assert.ok(restored.session.authKey);
-    assert.deepEqual(Buffer.from(restored.session.authKey!), Buffer.from(client.session.authKey!));
-    assert.equal(restored.session.serverSalt, client.session.serverSalt);
-  } finally {
-    await client.disconnect();
-    mock.stop();
-  }
-});
-
-test('bad_server_salt: pending call fails retryably and the session adopts the new salt', async () => {
+test('bad_server_salt: the invoker adopts the new salt and transparently resends', async () => {
   const mock = new MockLoginServer();
   mock.rotateSaltOnce = 0x0123456789abcdefn;
   const port = await mock.start();
@@ -616,13 +631,80 @@ test('bad_server_salt: pending call fails retryably and the session adopts the n
     await client.connect([mock.rsaKey]);
     mock.clientSessionId = client.session.sessionId;
 
-    await assert.rejects(
-      () => client.invoke(sdk.tlMethod('updates.getState', {})),
-      (err: unknown) =>
-        err instanceof Error && /bad_server_salt/.test(err.message) && /retried/.test(err.message),
-    );
-    // the rotated salt from the service message must be in effect
-    assert.equal(client.session.serverSalt, 0x0123456789abcdefn);
+    // the first attempt is answered with bad_server_salt; the invoker must
+    // adopt the rotated salt and resend, and the SECOND attempt must succeed
+    const result = (await client.invoke(sdk.tlMethod('updates.getState', {}))) as sdk.TLObject;
+    assert.equal(result.name, 'updates.state', 'the transparently resent request must succeed');
+    assert.equal(client.session.serverSalt, 0x0123456789abcdefn, 'the rotated salt must be in effect');
+  } finally {
+    await client.disconnect();
+    mock.stop();
+  }
+});
+
+test('Vector results are parsed through the RPC path (users.getUsers)', async () => {
+  const mock = new MockLoginServer();
+  const port = await mock.start();
+  const client = new TelegramClient({
+    apiId: 12345,
+    apiHash: '0123456789abcdef0123456789abcdef',
+    host: '127.0.0.1',
+    port,
+    dcId: 2,
+  });
+  try {
+    await client.connect([mock.rsaKey]);
+    mock.clientSessionId = client.session.sessionId;
+    const users = await client.invoke(sdk.tlMethod('users.getUsers', { id: [] }));
+    assert.ok(Array.isArray(users), 'a Vector result must resolve to an array');
+    const list = users as sdk.TLObject[];
+    assert.equal(list.length, 2);
+    assert.equal(list[0]!.name, 'user');
+    assert.equal(list[1]!.args.username, 'b');
+  } finally {
+    await client.disconnect();
+    mock.stop();
+  }
+});
+
+test('session export/apply round-trip preserves the logged-in user', async () => {
+  const { exportSessionString } = await import('../src/client/session-store.js');
+  const mock = new MockLoginServer();
+  const port = await mock.start();
+  const client = new TelegramClient({
+    apiId: 12345,
+    apiHash: '0123456789abcdef0123456789abcdef',
+    host: '127.0.0.1',
+    port,
+    dcId: 2,
+  });
+  try {
+    await client.connect([mock.rsaKey]);
+    mock.clientSessionId = client.session.sessionId;
+    const me = await loginUser(client, {
+      phone: async () => '+1234567890',
+      code: async () => '424242',
+      password: async () => 'secret123',
+    });
+
+    const string = exportSessionString(client);
+    const restored = new TelegramClient({
+      apiId: 12345,
+      apiHash: '0123456789abcdef0123456789abcdef',
+      session: string,
+    });
+    assert.ok(restored.session.authKey);
+    assert.deepEqual(Buffer.from(restored.session.authKey!), Buffer.from(client.session.authKey!));
+    assert.equal(restored.session.serverSalt, client.session.serverSalt);
+    // the logged-in user survives the round-trip: resumed clients skip re-login
+    assert.ok(restored.me, 'client.me must be restored from the session');
+    assert.equal(restored.me!.name, 'user');
+    assert.equal(restored.me!.args.id, (me.args.id as bigint));
+    assert.equal(restored.me!.args.username, 'mockuser');
+    // and the restored user is usable as a peer
+    const cached = restored.entityCache.resolve('mockuser');
+    assert.ok(cached);
+    assert.equal(cached.accessHash, 99n);
   } finally {
     await client.disconnect();
     mock.stop();

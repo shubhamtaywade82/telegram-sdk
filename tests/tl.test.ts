@@ -66,8 +66,8 @@ test('nested objects + entities round-trip (messages.sendMessage)', () => {
   assert.equal(peer.args.user_id, 7n);
   const entities = back.args.entities as sdk.TLObject[];
   assert.equal(entities.length, 1);
-  assert.equal(entities[0].name, 'messageEntityBold');
-  assert.equal(entities[0].args.offset, 3);
+  assert.equal(entities[0]!.name, 'messageEntityBold');
+  assert.equal(entities[0]!.args.offset, 3);
 });
 
 test('gzip_packed is transparent', () => {

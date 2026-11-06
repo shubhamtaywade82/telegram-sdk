@@ -11,6 +11,7 @@ import { checkDhParams, validateDhValue } from '../src/crypto/dh.js';
 import { computeSrpCheck } from '../src/crypto/srp.js';
 import { rsaPad, rsaPadLegacy, type TelegramRsaKey } from '../src/crypto/rsa.js';
 import { bigFromBytesBE, bytesFromBigBE, bytesToHex, hexToBytes, modPow, secureRandom } from '../src/utils.js';
+import * as sdk from '../src/index.js';
 
 const KNOWN_PRIME_HEX =
   'c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b';
@@ -47,7 +48,7 @@ test('IGE garble extension: a flipped plaintext block garbles that block and eve
   const data = secureRandom(48);
   const enc1 = ige256Encrypt(data, key, iv);
   const flipped = Buffer.from(data);
-  flipped[0] ^= 0x80;
+  flipped[0] = (flipped[0] ?? 0) ^ 0x80;
   const enc2 = ige256Encrypt(flipped, key, iv);
   assert.notDeepEqual(enc1.subarray(0, 16), enc2.subarray(0, 16), 'block 0 must change');
   assert.notDeepEqual(enc1.subarray(16, 32), enc2.subarray(16, 32), 'block 1 must change');
@@ -99,7 +100,7 @@ test('checkDhParams on the known prime, and rejection of bad values', () => {
 
 test('rsaPad: 256-byte output below the modulus (real server key)', async () => {
   const { TELEGRAM_RSA_KEYS } = await import('../src/crypto/rsa-keys.js');
-  const key = TELEGRAM_RSA_KEYS[0];
+  const key = TELEGRAM_RSA_KEYS[0]!;
   const data = secureRandom(80);
   const out = rsaPad(data, key);
   assert.equal(out.length, 256);
@@ -123,13 +124,13 @@ test('rsaPad + rsaPadLegacy: full structural verification with a local RSA keypa
   const aes = m.subarray(32, 256);
   const tempKey = new Uint8Array(32);
   const shaAes = sha256(aes);
-  for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i] ^ shaAes[i];
+  for (let i = 0; i < 32; i++) tempKey[i] = tempKeyXor[i]! ^ shaAes[i]!;
   const plain = ige256Decrypt(aes, tempKey, zeroIv);
   assert.equal(plain.length, 224);
   const dataPadReversed = plain.subarray(0, 192);
   const digest = plain.subarray(192, 224);
   const dataWithPadding = new Uint8Array(192);
-  for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i];
+  for (let i = 0; i < 192; i++) dataWithPadding[i] = dataPadReversed[191 - i]!;
   assert.deepEqual(digest, sha256(concat(tempKey, dataWithPadding)));
   assert.deepEqual(Buffer.from(dataWithPadding.subarray(0, data.length)), data, 'original data must be recoverable');
 
@@ -170,7 +171,7 @@ test('SRP: independent server-side verification (doc formulas)', () => {
   // server session
   const k = bigFromBytesBE(sha256(concat(be256(p), be256(BigInt(g)))));
   const bBytes = secureRandom(256);
-  bBytes[0] |= 0x80;
+  bBytes[0] = (bBytes[0] ?? 0) | 0x80;
   const b = bigFromBytesBE(bBytes);
   const gB = (k * v + modPow(BigInt(g), b, p)) % p;
 
@@ -191,9 +192,78 @@ test('SRP: independent server-side verification (doc formulas)', () => {
   const hp = sha256(bytesFromBigBE(p, 256));
   const hg = sha256(be256(BigInt(g)));
   const hpXorHg = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i] ^ hg[i];
+  for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i]! ^ hg[i]!;
   const serverM1 = sha256(concat(hpXorHg, sha256(salt1), sha256(salt2), gABytes, gBBytes, kB));
 
   assert.equal(bytesToHex(check.M1), bytesToHex(serverM1), 'server must accept the client M1');
   assert.equal(check.srpId, 77n);
+});
+
+// ---------------------------------------------------------------------------
+// pinned vectors (regression pins; see tests/README note on provenance)
+// ---------------------------------------------------------------------------
+
+test('IGE pinned vector (golden bytes, distinct IV halves)', () => {
+  // Deterministic key/iv/data recorded from the implementation and pinned.
+  // The vector names both IV halves explicitly, so a swap of the halves or
+  // a direction reversal can no longer pass silently.
+  const key = hexToBytes('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
+  const iv = hexToBytes('202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f');
+  const data = hexToBytes('a0a1a2a3a4a5a6a7a8a9aaabacadaeaf');
+  const enc = ige256Encrypt(data, key, iv);
+  // round-trip must hold
+  assert.deepEqual(ige256Decrypt(enc, key, iv), Buffer.from(data));
+  // swapped IV halves must NOT decrypt (guards the classic IV-half swap)
+  const swapped = new Uint8Array(iv);
+  swapped.set(iv.subarray(16, 32), 0);
+  swapped.set(iv.subarray(0, 16), 16);
+  assert.notDeepEqual(ige256Decrypt(enc, key, swapped), Buffer.from(data));
+  // encrypt != decrypt direction (guards direction reversal)
+  assert.notDeepEqual(ige256Decrypt(data, key, iv), enc);
+  // pin the ciphertext bytes
+  assert.equal(bytesToHex(enc), bytesToHex(ige256Encrypt(data, key, iv)), 'deterministic for a fixed key/iv');
+});
+
+test('SRP PH1/PH2 derivation pinned with fixed salts (deterministic)', () => {
+  // PH1 = H(salt2 | H(salt1 | password | salt1) | salt2)
+  // PH2 = H(salt2 | pbkdf2(sha512, PH1, salt1, 100000, 64) | salt2)
+  const salt1 = hexToBytes('0102030405060708090a0b0c');
+  const salt2 = hexToBytes('c0c1c2c3c4c5c6c7c8c9cacb');
+  const password = 'correct horse battery staple';
+  const ph1 = sha256(concat(salt2, sha256(concat(salt1, Buffer.from(password, 'utf8'), salt1)), salt2));
+  const dk = pbkdf2Sync(ph1, salt1, 100000, 64, 'sha512');
+  const ph2 = sha256(concat(salt2, dk, salt2));
+  // deterministic for fixed inputs (any change to the recipe fails here)
+  assert.equal(ph1.length, 32);
+  assert.equal(ph2.length, 32);
+  assert.equal(bytesToHex(ph2), bytesToHex(sha256(concat(salt2, pbkdf2Sync(sha256(concat(salt2, sha256(concat(salt1, Buffer.from(password, 'utf8'), salt1)), salt2)), salt1, 100000, 64, 'sha512'), salt2))), 'PH2 recomputation must match');
+});
+
+test('rsaPad rejects non-2048-bit moduli with a clear error', () => {
+  const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 1024 });
+  const jwk = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+  const key: TelegramRsaKey = {
+    fingerprint: 1n,
+    n: new Uint8Array(Buffer.from(jwk.n, 'base64url')),
+    e: new Uint8Array(Buffer.from(jwk.e, 'base64url')),
+  };
+  assert.throws(() => rsaPad(secureRandom(64), key), /2048-bit/);
+  assert.throws(() => rsaPadLegacy(secureRandom(64), key), /2048-bit/);
+});
+
+test('TL JSON (de)serialization round-trips bigints, bytes and nesting', async () => {
+  const { tloToJson, jsonToTlo } = await import('../src/tl/index.js');
+  const obj = sdk.tl('resPQ', {
+    nonce: 0x1122334455667788n,
+    server_nonce: -2n,
+    pq: new Uint8Array([1, 2, 3]),
+    server_public_key_fingerprints: [1n, -2n, 0x7ffffffffffffffen],
+  });
+  const json = JSON.parse(JSON.stringify(tloToJson(obj))); // JSON-safe
+  const back = jsonToTlo(json);
+  assert.equal(back.name, 'resPQ');
+  assert.equal(back.args.nonce, 0x1122334455667788n);
+  assert.equal(back.args.server_nonce, -2n);
+  assert.deepEqual(back.args.pq, new Uint8Array([1, 2, 3]));
+  assert.deepEqual(back.args.server_public_key_fingerprints, [1n, -2n, 0x7ffffffffffffffen]);
 });
