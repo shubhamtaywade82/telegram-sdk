@@ -6,6 +6,7 @@
 
 import { computeSrpCheck } from '../crypto/srp.js';
 import { tl, tlMethod, type TLObject } from '../tl/index.js';
+import { TelegramRpcError } from '../rpc.js';
 import type { TelegramClient } from './telegram-client.js';
 
 export interface UserLoginCallbacks {
@@ -40,8 +41,9 @@ export async function loginUser(client: TelegramClient, cbs: UserLoginCallbacks)
       }),
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!cbs.password || !msg.includes('SESSION_PASSWORD_NEEDED')) throw err;
+    const needsPassword =
+      err instanceof TelegramRpcError && err.telegramMessage === 'SESSION_PASSWORD_NEEDED';
+    if (!cbs.password || !needsPassword) throw err;
     auth = await check2FaPassword(client, (await cbs.password()));
   }
 

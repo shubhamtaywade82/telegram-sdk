@@ -162,15 +162,31 @@ export class MTProtoInvoker {
     }
 
     const obj = parseTLObject(new TLReader(body));
-    if (obj.name === 'bad_msg_notification') {
+    if (obj.name === 'bad_msg_notification' || obj.name === 'bad_server_salt') {
+      if (obj.name === 'bad_server_salt') {
+        // adopt the rotated salt immediately so the next request is packed with it
+        this.session.serverSalt = obj.args.new_server_salt as bigint;
+      }
       const badId = obj.args.bad_msg_id as bigint;
       const pending = this.pending.get(badId);
       if (pending) {
         this.pending.delete(badId);
         clearTimeout(pending.timer);
-        pending.reject(new Error(`bad_msg_notification (code ${obj.args.error_code}) for ${pending.method}`));
+        pending.reject(
+          obj.name === 'bad_server_salt'
+            ? new Error(
+                `bad_server_salt (code ${obj.args.error_code}) for ${pending.method}: ` +
+                  `the server rotated the salt; the request was rejected and must be retried`,
+              )
+            : new Error(`bad_msg_notification (code ${obj.args.error_code}) for ${pending.method}`),
+        );
       }
       return;
+    }
+    if (obj.name === 'new_session_created') {
+      // salt rotations ride along with new sessions; keep it current
+      this.session.serverSalt = obj.args.server_salt as bigint;
+      // fall through: applications may still want to see the update
     }
     if (obj.name === 'msgs_ack') return;
     this.onUpdate?.(obj);

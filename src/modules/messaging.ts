@@ -12,7 +12,10 @@ import type { CachedEntity, TelegramClient } from '../client/telegram-client.js'
 export interface SendMessageOptions {
   replyTo?: number;
   parseMode?: ParseMode;
+  /** Disable the link preview (web page snippet). */
   linkPreview?: boolean;
+  /** Deliver silently (no notification sound/vibration for recipients). */
+  silent?: boolean;
   entities?: TLObject[];
 }
 
@@ -30,13 +33,18 @@ export class Messaging {
     return tl('inputPeerChat', { chat_id: ent.id });
   }
 
+  /** Chats are addressable by id alone; users and channels need an access hash. */
+  private needsAccessHash(ent: CachedEntity): boolean {
+    return ent.kind !== 'chat' && ent.accessHash === 0n;
+  }
+
   /** Synchronously resolve cached peers / 'me' / ready InputPeer objects. */
   toInputPeer(ref: string | bigint | CachedEntity | TLObject): TLObject {
     if (typeof ref === 'object' && ref !== null && 'name' in ref) return ref as TLObject;
     if (typeof ref === 'object' && ref !== null && 'kind' in ref) return this.entityToInputPeer(ref as CachedEntity);
     if (typeof ref === 'bigint') {
       const ent = this.client.entityCache.resolve(ref.toString());
-      if (!ent || ent.accessHash === 0n) {
+      if (!ent || this.needsAccessHash(ent)) {
         throw new Error(`peer ${ref} is not cached (no access hash); use await resolvePeer() or getDialogs() first`);
       }
       return this.entityToInputPeer(ent);
@@ -44,7 +52,7 @@ export class Messaging {
     const s = ref.trim();
     if (s === 'me' || s === 'self') return tl('inputPeerSelf', {});
     const cached = this.client.entityCache.resolve(s);
-    if (cached && cached.accessHash !== 0n) return this.entityToInputPeer(cached);
+    if (cached && !this.needsAccessHash(cached)) return this.entityToInputPeer(cached);
     throw new Error(`peer ${s} is not cached; use await resolvePeer() (network) or getDialogs() first`);
   }
 
@@ -56,7 +64,7 @@ export class Messaging {
     const s = ref.trim();
     if (s === 'me' || s === 'self') return tl('inputPeerSelf', {});
     const cached = this.client.entityCache.resolve(s);
-    if (cached && cached.accessHash !== 0n) return this.entityToInputPeer(cached);
+    if (cached && !this.needsAccessHash(cached)) return this.entityToInputPeer(cached);
     const username = s.startsWith('@') ? s.slice(1) : s;
     if (!/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(username)) {
       throw new Error(`cannot resolve peer: ${s}`);
@@ -85,6 +93,7 @@ export class Messaging {
       message: formatted.text,
       random_id: randomLong(),
       no_webpage: options.linkPreview === false ? true : undefined,
+      silent: options.silent === true ? true : undefined,
     };
     if (entities && entityCount(entities) > 0) args.entities = entities;
     if (options.replyTo !== undefined) {
