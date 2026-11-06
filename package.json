@@ -64,6 +64,8 @@
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
+    "cifrante": "0.8.1",
+    "teleproto": "1.232.1",
     "tsx": "^4.19.0",
     "typedoc": "^0.28.0",
     "typescript": "^5.6.0"

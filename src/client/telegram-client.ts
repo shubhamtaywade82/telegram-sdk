@@ -133,7 +133,7 @@ const INIT_CONNECTION_ID = 0xc1cd5ea9;
  * Serialize `invokeWithLayer(layer, initConnection(..., query))` — the form
  * the server expects for the first API call of a connection.
  */
-function wrapWithInitConnection(
+export function wrapWithInitConnection(
   method: TLObject,
   apiId: number,
   appVersion: string,

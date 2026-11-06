@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generator tooling: `npm run fetch:botapi`, `npm run generate:botapi`, `npm run check:botapi`
   (the last runs in CI and fails on stale generated sources).
 - Documentation: `docs/bot-api-generator.md`.
+- Oracle tests (`tests/oracle-teleproto.test.ts`, documented in `docs/oracles.md`): TL serialisation
+  checked byte-for-byte against teleproto 1.232.1, and AES-256-IGE against cifrante 0.8.1.
 
 ## [0.2.0] - 2026-11-06
 
