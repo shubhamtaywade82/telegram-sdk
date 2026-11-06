@@ -96,7 +96,7 @@ export function computeSrpCheck(password: string, algo: SrpAlgo, server: SrpServ
 
   // --- client ephemeral ---
   const aBytes = secureRandom(256);
-  aBytes[0] |= 0x80;
+  aBytes[0] = (aBytes[0] ?? 0) | 0x80;
   const a = bigFromBytesBE(aBytes);
   const gA = modPow(g, a, p);
   const gABytes = be2048(gA);
@@ -114,8 +114,17 @@ export function computeSrpCheck(password: string, algo: SrpAlgo, server: SrpServ
   const hp = sha256(algo.p);
   const hg = sha256(gPadded);
   const hpXorHg = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i] ^ hg[i];
+  for (let i = 0; i < 32; i++) hpXorHg[i] = hp[i]! ^ hg[i]!;
   const m1 = sha256(concat(hpXorHg, sha256(s1), sha256(s2), gABytes, gBBytes, k_a));
 
+  // best-effort zeroization of owned intermediates (the password string
+  // itself cannot be zeroed in JavaScript)
+  zeroize(aBytes, ph1, dk, ph2);
+
   return { srpId: server.srpId, A: gABytes, M1: m1 };
+}
+
+/** Best-effort zeroization of owned byte buffers. */
+function zeroize(...buffers: Uint8Array[]): void {
+  for (const b of buffers) b.fill(0);
 }

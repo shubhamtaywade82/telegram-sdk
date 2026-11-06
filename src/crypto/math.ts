@@ -39,14 +39,16 @@ function smallPrimes(): number[] {
 }
 
 /** Pollard's rho (Floyd cycle, varied polynomial) for odd composite `n`. */
-function pollardRho(n: bigint): bigint {
+function pollardRho(n: bigint, maxSteps = 200_000): bigint {
   if (n % 2n === 0n) return 2n;
   for (let attempt = 0; attempt < 96; attempt++) {
     const c = BigInt(1 + attempt);
     let x = BigInt(3 + ((attempt * 37) % 512));
     let y = x;
     let d = 1n;
+    let steps = 0;
     while (d === 1n) {
+      if (++steps > maxSteps) break; // iteration cap: hostile input guard
       x = (x * x + c) % n;
       y = (y * y + c) % n;
       y = (y * y + c) % n;
@@ -65,6 +67,11 @@ function pollardRho(n: bigint): bigint {
 export function factorizePQ(pq: bigint): { p: bigint; q: bigint } {
   if (pq < 15n || pq >= 2n ** 63n) {
     throw new RangeError(`pq out of range: ${pq}`);
+  }
+  // primality pre-check: a prime pq has no such factorization, and rho on a
+  // prime would spin until the cap (a hostile server can send one pre-auth)
+  if (isProbablyPrime(pq, 12)) {
+    throw new Error(`pq is prime, cannot be a p*q product: ${pq}`);
   }
   const ordered = (a: bigint, b: bigint): { p: bigint; q: bigint } =>
     a < b ? { p: a, q: b } : { p: b, q: a };

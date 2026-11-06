@@ -135,8 +135,15 @@ function writeBody(writer: TLWriter, desc: TLDescriptor, args: Record<string, un
   for (const a of desc.args) {
     const m = CONDITIONAL.exec(a.type);
     if (!m) continue;
-    const present = args[a.name] !== undefined && args[a.name] !== false;
-    if (present) flagValues.set(m[1], (flagValues.get(m[1]) ?? 0) | (1 << Number(m[2])));
+    const value = args[a.name];
+    // flags.N?true is presence-only: only `false` clears the bit. Every other
+    // conditional type treats an explicit value - including `false` for
+    // flags.N?Bool - as PRESENT (reference semantics: e.g. codeSettings'
+    // app_sandbox can carry a real Bool false).
+    const present = value !== undefined && (m[3]! === 'true' ? value !== false : true);
+    if (present) {
+      flagValues.set(m[1]!, (((flagValues.get(m[1]!) ?? 0) | (1 << Number(m[2]!))) >>> 0));
+    }
   }
   // 2) write all arguments in declaration order. Conditional fields are
   //    driven by the FLAG BIT (exactly like the parser), never by value
@@ -151,17 +158,17 @@ function writeBody(writer: TLWriter, desc: TLDescriptor, args: Record<string, un
     const m = CONDITIONAL.exec(a.type);
     const value = args[a.name];
     if (m) {
-      if (m[3] === 'true') continue; // presence-only flag: the bit is the value
-      const bit = Number(m[2]);
-      const set = ((flagValues.get(m[1]) ?? 0) >>> bit) & 1;
+      if (m[3]! === 'true') continue; // presence-only flag: the bit is the value
+      const bit = Number(m[2]!);
+      const set = ((flagValues.get(m[1]!) ?? 0) >>> bit) & 1;
       if (set !== 1) continue; // bit clear: field absent
-      if (value === undefined || value === false) {
+      if (value === undefined) {
         throw new TypeError(
-          `${desc.kind} ${desc.name}: flag bit ${bit} of '${m[1]}' is set by a sibling field, ` +
-            `but '${a.name}' (${m[3]}) is missing - fields sharing a flag bit must be provided together`,
+          `${desc.kind} ${desc.name}: flag bit ${bit} of '${m[1]!}' is set by a sibling field, ` +
+            `but '${a.name}' (${m[3]!}) is missing - fields sharing a flag bit must be provided together`,
         );
       }
-      writeValue(writer, m[3], value, reg);
+      writeValue(writer, m[3]!, value, reg);
       continue;
     }
     if (value === undefined) {
@@ -233,14 +240,23 @@ function writeValue(writer: TLWriter, type: string, value: unknown, reg: TLRegis
 
 /**
  * Parse one TL object from the reader. `gzip_packed` wrappers are
- * transparently inflated. A bare top-level Vector cannot be parsed without
- * its element type - use `parseResult` for method results instead.
+ * transparently inflated (output capped at 16 MiB, nesting capped at 4).
+ * A bare top-level Vector cannot be parsed without its element type - use
+ * `parseResult` for method results instead.
  */
 export function parseTLObject(reader: TLReader, reg: TLRegistry = registry): TLObject {
+  return parseTLObjectDepth(reader, reg, 0);
+}
+
+const GZIP_MAX_OUTPUT = 1 << 24;
+
+function parseTLObjectDepth(reader: TLReader, reg: TLRegistry, depth: number): TLObject {
+  if (depth > 4) throw new Error('gzip_packed nesting too deep');
   const id = reader.readUint();
   if (id === GZIP_PACKED_ID) {
     const data = reader.readBytes();
-    return parseTLObject(new TLReader(gunzipSync(data)), reg);
+    const inflated = gunzipSync(data, { maxOutputLength: GZIP_MAX_OUTPUT });
+    return parseTLObjectDepth(new TLReader(inflated), reg, depth + 1);
   }
   if (id === TL_VECTOR_ID) {
     throw new Error('top-level bare Vector: parse it through parseResult (element type is needed)');
@@ -263,7 +279,8 @@ export function parseResult(reader: TLReader, type: string, reg: TLRegistry = re
   const id = reader.readUint();
   if (id === GZIP_PACKED_ID) {
     const data = reader.readBytes();
-    return parseResult(new TLReader(gunzipSync(data)), type, reg);
+    const inflated = gunzipSync(data, { maxOutputLength: GZIP_MAX_OUTPUT });
+    return parseResult(new TLReader(inflated), type, reg);
   }
   reader.pos = save;
   return readValue(reader, type, reg);
@@ -281,10 +298,10 @@ function readBody(reader: TLReader, desc: TLDescriptor, reg: TLRegistry): Record
     }
     const m = CONDITIONAL.exec(a.type);
     if (m) {
-      const flagParam = m[1];
-      const bit = Number(m[2]);
+      const flagParam = m[1]!;
+      const bit = Number(m[2]!);
       const set = ((flagValues.get(flagParam) ?? 0) >>> bit) & 1;
-      if (m[3] === 'true') {
+      if (m[3]! === 'true') {
         out[a.name] = set === 1;
         continue;
       }
@@ -292,7 +309,7 @@ function readBody(reader: TLReader, desc: TLDescriptor, reg: TLRegistry): Record
         out[a.name] = undefined;
         continue;
       }
-      out[a.name] = readValue(reader, m[3], reg);
+      out[a.name] = readValue(reader, m[3]!, reg);
       continue;
     }
     out[a.name] = readValue(reader, a.type, reg);
@@ -345,4 +362,67 @@ function readValue(reader: TLReader, type: string, reg: TLRegistry): unknown {
   }
   // named type: nested object
   return parseTLObject(reader, reg);
+}
+
+// ---------------------------------------------------------------------------
+// JSON (de)serialization of TL objects (session persistence)
+// ---------------------------------------------------------------------------
+
+const JSON_BIGINT = '__bigint';
+const JSON_BYTES = '__bytes';
+const JSON_TLO = '__tlo';
+
+function argToJson(v: unknown): unknown {
+  if (typeof v === 'bigint') return { [JSON_BIGINT]: v.toString() };
+  if (v instanceof Uint8Array) return { [JSON_BYTES]: Buffer.from(v).toString('base64') };
+  if (Array.isArray(v)) return v.map(argToJson);
+  if (v !== null && typeof v === 'object' && 'name' in v && 'args' in v) return tloToJson(v as TLObject);
+  return v;
+}
+
+/** Serialize a TL object into a JSON-safe structure (bigints/bytes tagged). */
+export function tloToJson(obj: TLObject): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj.args)) args[k] = argToJson(v);
+  return { [JSON_TLO]: true, kind: obj.kind, id: obj.id, name: obj.name, args };
+}
+
+function jsonToArg(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(jsonToArg);
+  if (v !== null && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o[JSON_BIGINT] === 'string') return BigInt(o[JSON_BIGINT]);
+    if (typeof o[JSON_BYTES] === 'string') return new Uint8Array(Buffer.from(o[JSON_BYTES], 'base64'));
+    if (o[JSON_TLO] === true && typeof o.name === 'string') {
+      return new TLObject(
+        o.kind === 'method' ? 'method' : 'constructor',
+        typeof o.id === 'number' ? o.id : 0,
+        o.name,
+        jsonToArgs(o.args),
+      );
+    }
+  }
+  return v;
+}
+
+function jsonToArgs(v: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (v !== null && typeof v === 'object') {
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = jsonToArg(val);
+  }
+  return out;
+}
+
+/** Rebuild a TL object serialized with `tloToJson`. */
+export function jsonToTlo(v: unknown): TLObject {
+  const o = v as Record<string, unknown>;
+  if (o === null || typeof o !== 'object' || o[JSON_TLO] !== true || typeof o.name !== 'string') {
+    throw new TypeError('not a serialized TL object');
+  }
+  return new TLObject(
+    o.kind === 'method' ? 'method' : 'constructor',
+    typeof o.id === 'number' ? o.id : 0,
+    o.name,
+    jsonToArgs(o.args),
+  );
 }

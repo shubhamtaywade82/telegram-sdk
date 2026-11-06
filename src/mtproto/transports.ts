@@ -5,8 +5,12 @@
  *                  (1 byte, or 0x7f + 3-byte LE when >= 0x7f).
  *  - intermediate: hello 0xeeeeeeee; packets are 4-byte LE length + payload.
  *                  A negative length signals a transport error.
- *  - full:         hello bytes ef 00 00 00; packets are 4-byte LE length +
- *                  payload + CRC32 (over the length bytes + payload).
+ *  - full:         no hello. Packets are
+ *                    len(4, LE, counts itself + seq + payload + crc)
+ *                    seq(4, LE, TCP sequence number, first packet 0)
+ *                    payload
+ *                    crc32(4, LE, over len + seq + payload)
+ *                  per core.telegram.org/mtproto/mtproto-transports.
  *
  * @module
  */
@@ -15,6 +19,7 @@
  * CRC-32 (IEEE 802.3, reflected polynomial 0xEDB88320) — bit-for-bit identical
  * to `zlib.crc32()`. Implemented locally because `node:zlib` did not export
  * `crc32` until Node.js 20.15.0/22.2.0, while this SDK supports Node >= 18.17.
+ * A differential test against zlib runs on Node >= 20.15.
  */
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -29,12 +34,19 @@ const CRC32_TABLE = (() => {
 function crc32(data: Uint8Array): number {
   let c = 0xffffffff;
   for (let i = 0; i < data.length; i++) {
-    c = CRC32_TABLE[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+    c = CRC32_TABLE[(c ^ data[i]!) & 0xff]! ^ (c >>> 8);
   }
   return (c ^ 0xffffffff) >>> 0;
 }
 
 export type TransportName = 'abridged' | 'intermediate' | 'full';
+
+/**
+ * Maximum accepted payload per frame. The largest regular MTProto payload is
+ * a 1 MiB upload.getFile chunk; 16 MiB leaves generous headroom while still
+ * rejecting hostile length fields (and their allocations).
+ */
+const MAX_PAYLOAD_BYTES = 1 << 24;
 
 /** Transport-level error (negative length in framing). */
 export class TransportError extends Error {
@@ -46,7 +58,7 @@ export class TransportError extends Error {
 
 export interface Transport {
   readonly name: TransportName;
-  /** Bytes to send once when the connection opens. */
+  /** Bytes to send once when the connection opens (may be empty). */
   hello(): Uint8Array;
   /** Frame one payload. */
   encode(payload: Uint8Array): Uint8Array;
@@ -54,18 +66,27 @@ export interface Transport {
   feed(chunk: Uint8Array): Uint8Array[];
 }
 
+/**
+ * Base class with linear-time reassembly: chunks are queued and only
+ * compacted when a full frame is actually available, so feeding a large
+ * frame in many small chunks stays O(total bytes).
+ */
 abstract class BufferedTransport implements Transport {
   abstract readonly name: TransportName;
-  protected pending = Buffer.alloc(0);
+  private chunks: Buffer[] = [];
+  private length = 0;
 
   abstract hello(): Uint8Array;
   abstract encode(payload: Uint8Array): Uint8Array;
 
-  /** Try to parse one complete payload from the pending buffer. */
+  /** Try to parse one complete payload from the buffered bytes. */
   protected abstract tryParse(): Uint8Array | undefined;
 
   feed(chunk: Uint8Array): Uint8Array[] {
-    this.pending = Buffer.concat([this.pending, Buffer.from(chunk)]);
+    if (chunk.length > 0) {
+      this.chunks.push(Buffer.from(chunk));
+      this.length += chunk.length;
+    }
     const out: Uint8Array[] = [];
     for (;;) {
       const frame = this.tryParse();
@@ -75,15 +96,62 @@ abstract class BufferedTransport implements Transport {
     return out;
   }
 
-  /** Consumes `n` bytes from the pending buffer. */
+  /** Total buffered bytes. */
+  protected get buffered(): number {
+    return this.length;
+  }
+
+  /** Read-only view of the first `n` buffered bytes, or null if not enough. */
+  protected peek(n: number): Buffer | null {
+    if (this.length < n) return null;
+    const first = this.chunks[0];
+    if (first === undefined || first.length < n) this.compact();
+    const buf = this.chunks[0];
+    return buf === undefined ? null : buf.subarray(0, n);
+  }
+
+  /** Consume the first `n` buffered bytes. */
   protected take(n: number): Buffer {
-    const out = this.pending.subarray(0, n);
-    this.pending = this.pending.subarray(n);
+    let first = this.chunks[0];
+    if (first === undefined || first.length < n) this.compact();
+    first = this.chunks[0];
+    if (first === undefined || first.length < n) {
+      throw new Error('transport take: buffer underflow');
+    }
+    let out: Buffer;
+    if (first.length === n) {
+      out = first;
+      this.chunks.shift();
+    } else {
+      out = first.subarray(0, n);
+      this.chunks[0] = first.subarray(n);
+    }
+    this.length -= n;
     return out;
   }
 
-  protected get buffered(): number {
-    return this.pending.length;
+  private compact(): void {
+    this.chunks = [
+      this.chunks.length <= 1 ? (this.chunks[0] ?? Buffer.alloc(0)) : Buffer.concat(this.chunks, this.length),
+    ];
+  }
+
+  /** Reject oversized frames before they can be allocated. */
+  protected checkPayloadSize(len: number): void {
+    if (len > MAX_PAYLOAD_BYTES) {
+      throw new Error(
+        `${this.name} transport: frame payload ${len} exceeds the ${MAX_PAYLOAD_BYTES}-byte limit`,
+      );
+    }
+  }
+
+  /** Reject oversized encode inputs. */
+  protected checkEncodeSize(len: number): void {
+    if (len > MAX_PAYLOAD_BYTES) {
+      throw new RangeError(
+        `${this.name} transport: cannot frame ${len} bytes (limit ${MAX_PAYLOAD_BYTES})`,
+      );
+    }
   }
 }
 
@@ -98,6 +166,7 @@ class AbridgedTransport extends BufferedTransport {
     if (payload.length === 0 || payload.length % 4 !== 0) {
       throw new RangeError(`abridged payload length must be a positive multiple of 4, got ${payload.length}`);
     }
+    this.checkEncodeSize(payload.length);
     const quarters = payload.length / 4;
     if (quarters < 0x7f) {
       const out = new Uint8Array(1 + payload.length);
@@ -115,19 +184,22 @@ class AbridgedTransport extends BufferedTransport {
   }
 
   protected tryParse(): Uint8Array | undefined {
-    if (this.buffered < 1) return undefined;
-    const first = this.pending[0];
+    const head = this.peek(1);
+    if (!head) return undefined;
+    const first = head[0]!;
     let quarters: number;
     let headerSize: number;
     if (first === 0x7f) {
-      if (this.buffered < 4) return undefined;
-      quarters = this.pending[1] | (this.pending[2] << 8) | (this.pending[3] << 16);
+      const h = this.peek(4);
+      if (!h) return undefined;
+      quarters = (h[1]! | (h[2]! << 8) | (h[3]! << 16)) >>> 0;
       headerSize = 4;
     } else {
       quarters = first;
       headerSize = 1;
     }
     const payloadLen = quarters * 4;
+    this.checkPayloadSize(payloadLen);
     if (this.buffered < headerSize + payloadLen) return undefined;
     this.take(headerSize);
     return this.take(payloadLen);
@@ -144,6 +216,7 @@ class IntermediateTransport extends BufferedTransport {
   }
 
   encode(payload: Uint8Array): Uint8Array {
+    this.checkEncodeSize(payload.length);
     const out = new Uint8Array(4 + payload.length);
     new DataView(out.buffer).setInt32(0, payload.length, true);
     out.set(payload, 4);
@@ -151,12 +224,14 @@ class IntermediateTransport extends BufferedTransport {
   }
 
   protected tryParse(): Uint8Array | undefined {
-    if (this.buffered < 4) return undefined;
-    const len = this.pending.readInt32LE(0);
+    const h = this.peek(4);
+    if (!h) return undefined;
+    const len = h.readInt32LE(0);
     if (len < 0) {
       this.take(4);
       throw new TransportError(len);
     }
+    this.checkPayloadSize(len);
     if (this.buffered < 4 + len) return undefined;
     this.take(4);
     return this.take(len);
@@ -165,36 +240,49 @@ class IntermediateTransport extends BufferedTransport {
 
 class FullTransport extends BufferedTransport {
   readonly name = 'full' as const;
+  /** TCP sequence number of the next packet we send (first packet = 0). */
+  private sendSeq = 0;
 
   hello(): Uint8Array {
-    return new Uint8Array([0xef, 0x00, 0x00, 0x00]);
+    // the full transport has no magic bytes
+    return new Uint8Array(0);
   }
 
   encode(payload: Uint8Array): Uint8Array {
-    const header = Buffer.alloc(4);
-    header.writeInt32LE(payload.length, 0);
-    const body = Buffer.concat([header, Buffer.from(payload)]);
+    this.checkEncodeSize(payload.length);
+    const header = Buffer.alloc(8);
+    // the length counts the whole packet: length + seq + payload + crc
+    header.writeUInt32LE(payload.length + 12, 0);
+    header.writeUInt32LE(this.sendSeq, 4);
+    this.sendSeq = (this.sendSeq + 1) >>> 0;
     const crc = Buffer.alloc(4);
-    crc.writeUInt32LE(crc32(body) >>> 0, 0);
-    return new Uint8Array(Buffer.concat([body, crc]));
+    crc.writeUInt32LE(crc32(Buffer.concat([header, Buffer.from(payload)])) >>> 0, 0);
+    return new Uint8Array(Buffer.concat([header, Buffer.from(payload), crc]));
   }
 
   protected tryParse(): Uint8Array | undefined {
-    if (this.buffered < 4) return undefined;
-    const len = this.pending.readInt32LE(0);
-    if (len < 0) {
-      this.take(4);
-      throw new TransportError(len);
+    const h = this.peek(8);
+    if (!h) return undefined;
+    const total = h.readUInt32LE(0); // counts the whole packet
+    if (total < 12) {
+      throw new Error(`full transport: invalid packet length ${total}`);
     }
-    if (this.buffered < 4 + len + 4) return undefined;
-    this.take(4);
-    const payload = this.take(len);
-    const crc = this.take(4).readUInt32LE(0);
-    const header = Buffer.alloc(4);
-    header.writeInt32LE(len, 0);
+    const seq = h.readUInt32LE(4); // tracked, not enforced (per-connection)
+    void seq;
+    const payloadLen = total - 12;
+    this.checkPayloadSize(payloadLen);
+    if (this.buffered < total) return undefined;
+    this.take(4); // length
+    this.take(4); // seq
+    const payload = this.take(payloadLen);
+    const crcBytes = this.take(4);
+    const crc = crcBytes.readUInt32LE(0);
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(total, 0);
+    header.writeUInt32LE(seq, 4);
     const expected = crc32(Buffer.concat([header, payload])) >>> 0;
     if (crc !== expected) {
-      throw new Error(`full transport: CRC32 mismatch (got ${crc}, expected ${expected})`);
+      throw new Error(`full transport: CRC32 mismatch (got 0x${crc.toString(16)}, expected 0x${expected.toString(16)})`);
     }
     return payload;
   }

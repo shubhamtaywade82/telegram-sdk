@@ -20,6 +20,7 @@ export * from './binary.js';
 export * from './tl/index.js';
 export { LAYER, ALL_CONSTRUCTORS, ALL_METHODS } from './tl/schema-all.js';
 export { LAYER as CORE_LAYER, ALL_CORE_CONSTRUCTORS, ALL_CORE_METHODS } from './tl/schema-core.js';
+export { tloToJson, jsonToTlo } from './tl/index.js';
 export * from './crypto/ige.js';
 export * from './crypto/rsa.js';
 export { TELEGRAM_RSA_KEYS } from './crypto/rsa-keys.js';

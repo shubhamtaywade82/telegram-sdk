@@ -40,6 +40,17 @@ const HTML_TAGS: Record<string, string> = {
   a: 'messageEntityTextUrl',
 };
 
+/** Decode the five predefined XML entities (plus numeric forms). */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&'); // &amp; must be last: &amp;lt; decodes to the literal "&lt;"
+}
+
 /** Parse Telegram-compatible HTML into entities. */
 export function parseHtml(input: string): FormattedText {
   let text = '';
@@ -49,25 +60,25 @@ export function parseHtml(input: string): FormattedText {
   while (i < input.length) {
     const lt = input.indexOf('<', i);
     if (lt < 0) {
-      text += input.slice(i);
+      text += decodeEntities(input.slice(i));
       break;
     }
-    text += input.slice(i, lt);
+    text += decodeEntities(input.slice(i, lt));
     const gt = input.indexOf('>', lt);
     if (gt < 0) {
-      text += input.slice(lt);
+      text += decodeEntities(input.slice(lt));
       break;
     }
     const tagContent = input.slice(lt + 1, gt).trim();
     i = gt + 1;
     if (tagContent.startsWith('/')) {
-      const tag = tagContent.slice(1).toLowerCase().split(/\s/)[0];
+      const tag = tagContent.slice(1).toLowerCase().split(/\s/)[0]!;
       const idx = stack.map((s) => s.tag).lastIndexOf(tag);
       if (idx >= 0) {
-        const open = stack.splice(idx, 1)[0];
+        const open = stack.splice(idx, 1)[0]!;
         const length = text.length - open.start;
         if (length > 0) {
-          if (tag === 'a') entities.push(makeEntity('messageEntityTextUrl', open.start, length, { url: open.url ?? '' }));
+          if (tag === 'a') entities.push(makeEntity('messageEntityTextUrl', open.start, length, { url: decodeEntities(open.url ?? '') }));
           else if (tag === 'pre') entities.push(makeEntity('messageEntityPre', open.start, length, { language: open.language ?? '' }));
           else entities.push(makeEntity(HTML_TAGS[tag] ?? 'messageEntityBold', open.start, length));
         }
@@ -76,8 +87,8 @@ export function parseHtml(input: string): FormattedText {
     }
     const m = /^([a-zA-Z0-9]+)(\s[^>]*)?$/.exec(tagContent);
     if (!m) continue; // drop malformed tag, keep content
-    const tag = m[1].toLowerCase();
-    if (!(tag in HTML_TAGS)) continue; // drop unknown tag, keep content
+    const tag = m[1]!.toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(HTML_TAGS, tag)) continue; // drop unknown tag, keep content
     const attrs = m[2] ?? '';
     stack.push({
       tag,
@@ -97,7 +108,8 @@ export function parseHtml(input: string): FormattedText {
  * Parse a MarkdownV2 subset into entities.
  *
  * Supported marks: `*bold*`, `_italic_`, `__underline__`, `~strike~`,
- * `` `code` ``, fenced ` ```pre``` `, `||spoiler||`, and `&#91;text&#93;(url)` links.
+ * `` `code` ``, fenced ` ```pre``` `, `||spoiler||`, `[text](url)` links,
+ * and `\` escapes for literal reserved characters.
  */
 export function parseMarkdownV2(input: string): FormattedText {
   let text = '';
@@ -107,10 +119,15 @@ export function parseMarkdownV2(input: string): FormattedText {
 
   const closeExists = (token: string, from: number): boolean => input.indexOf(token, from) >= 0;
 
+  const inCode = (): boolean => {
+    const top = stack[stack.length - 1]!;
+    return top !== undefined && (top.mark === '```' || top.mark === '`');
+  };
+
   const tryClose = (mark: string): boolean => {
     const idx = stack.map((s) => s.mark).lastIndexOf(mark);
     if (idx < 0) return false;
-    const open = stack.splice(idx, 1)[0];
+    const open = stack.splice(idx, 1)[0]!;
     const length = text.length - open.start;
     if (length > 0) {
       if (mark === '```') entities.push(makeEntity('messageEntityPre', open.start, length, { language: '' }));
@@ -125,9 +142,15 @@ export function parseMarkdownV2(input: string): FormattedText {
   };
 
   while (i < input.length) {
+    // backslash escape: the next character is literal, never formatting
+    if (input[i] === '\\' && !inCode() && i + 1 < input.length) {
+      text += input[i + 1];
+      i += 2;
+      continue;
+    }
     // fenced code
     if (input.startsWith('```', i)) {
-      if (stack.length > 0 && stack[stack.length - 1].mark === '```') {
+      if (stack.length > 0 && stack[stack.length - 1]!.mark === '```') {
         tryClose('```');
       } else if (closeExists('```', i + 3)) {
         stack.push({ mark: '```', start: text.length });
@@ -258,15 +281,18 @@ export function fromTgFormat(message: TgFormatLike): FormattedText {
 function isTgFormatLike(v: unknown): v is TgFormatLike {
   if (v === null || typeof v !== 'object') return false;
   const m = v as { text?: unknown; entities?: unknown };
-  const first: unknown = (m.entities as unknown[])[0];
-  return typeof m.text === 'string' && Array.isArray(m.entities) && m.entities.length > 0 && typeof first === 'object' && first !== null && 'type' in first;
+  if (typeof m.text !== 'string' || !Array.isArray(m.entities) || m.entities.length === 0) return false;
+  const first = m.entities[0];
+  return typeof first === 'object' && first !== null && 'type' in first;
 }
 
 function isOurFormatted(v: unknown): v is FormattedText {
   if (v === null || typeof v !== 'object') return false;
   const m = v as { text?: unknown; entities?: unknown };
-  const first: unknown = (m.entities as unknown[])[0];
-  return typeof m.text === 'string' && Array.isArray(m.entities) && (m.entities.length === 0 || (typeof first === 'object' && first !== null && 'name' in first));
+  if (typeof m.text !== 'string' || !Array.isArray(m.entities)) return false;
+  if (m.entities.length === 0) return true;
+  const first = m.entities[0];
+  return typeof first === 'object' && first !== null && 'name' in first;
 }
 
 /** Normalize any supported input (string, FormattedText, tg-format message) for sending. */
@@ -279,9 +305,4 @@ export function toSendable(input: string | FormattedText | TgFormatLike, parseMo
   if (isTgFormatLike(input)) return fromTgFormat(input);
   if (isOurFormatted(input)) return input;
   return { text: String(input), entities: [] };
-}
-
-/** Apply a parse mode to a plain string (no-op for objects). */
-export function applyParseMode(text: string, mode: ParseMode): FormattedText {
-  return toSendable(text, mode);
 }

@@ -52,6 +52,11 @@ function sha1(bytes: Uint8Array): Buffer {
   return createHash('sha1').update(bytes).digest();
 }
 
+/** Best-effort zeroization of owned byte buffers (strings cannot be zeroed). */
+function zeroize(...buffers: Uint8Array[]): void {
+  for (const b of buffers) b.fill(0);
+}
+
 function concat(...parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
@@ -83,7 +88,9 @@ function parseServerErrorCode(body: Uint8Array): number | null {
   return null;
 }
 
-/** Create an authorization key; updates the session (auth key, salt, time). */
+/** Create an authorization key; updates the session (auth key, salt, time).
+ * Restarts the handshake once when the server answers dh_gen_fail (per the
+ * spec, that answer means the whole algorithm must be restarted). */
 export async function createAuthKey(
   connection: MTProtoConnection,
   session: MTProtoSession,
@@ -93,15 +100,33 @@ export async function createAuthKey(
   const scheme = options.rsaScheme ?? 'auto';
   if (scheme === 'auto') {
     try {
-      return await runHandshake(connection, session, rsaKeys, 'new', options);
+      return await runHandshakeWithRestart(connection, session, rsaKeys, 'new', options);
     } catch (err) {
       if (err instanceof AuthKeyError && err.serverCode === -404) {
-        return await runHandshake(connection, session, rsaKeys, 'legacy', options);
+        return await runHandshakeWithRestart(connection, session, rsaKeys, 'legacy', options);
       }
       throw err;
     }
   }
-  return runHandshake(connection, session, rsaKeys, scheme === 'legacy' ? 'legacy' : 'new', options);
+  return runHandshakeWithRestart(connection, session, rsaKeys, scheme === 'legacy' ? 'legacy' : 'new', options);
+}
+
+async function runHandshakeWithRestart(
+  connection: MTProtoConnection,
+  session: MTProtoSession,
+  rsaKeys: readonly TelegramRsaKey[],
+  rsaMode: 'new' | 'legacy',
+  options: CreateAuthKeyOptions,
+): Promise<AuthKeyResult> {
+  try {
+    return await runHandshake(connection, session, rsaKeys, rsaMode, options);
+  } catch (err) {
+    if (err instanceof AuthKeyError && /dh_gen_fail/.test(err.message)) {
+      // dh_gen_fail: restart the algorithm from scratch (once)
+      return await runHandshake(connection, session, rsaKeys, rsaMode, options);
+    }
+    throw err;
+  }
 }
 
 async function runHandshake(
@@ -218,13 +243,12 @@ async function runHandshake(
   let retryId = 0n;
   for (let attempt = 1; attempt <= 5; attempt++) {
     const bBytes = secureRandom(256);
-    bBytes[0] |= 0x80;
+    bBytes[0] = (bBytes[0] ?? 0) | 0x80;
     const b = bigFromBytesBE(bBytes);
     const gB = modPow(BigInt(g), b, dhPrime);
     const authKeyBig = modPow(gA, b, dhPrime);
     const authKeyBytes = bytesFromBigBE(authKeyBig, 256);
     const auxHash = sha1(authKeyBytes).subarray(0, 8); // 64 higher-order bits
-
     const clientInner = serializeTLObject(
       tl('client_DH_inner_data', {
         nonce,
@@ -261,10 +285,11 @@ async function runHandshake(
       if (!bytesEqual(expected, got)) throw new AuthKeyError('dh_gen_ok: new_nonce_hash1 mismatch');
 
       const saltBytes = new Uint8Array(8);
-      for (let i = 0; i < 8; i++) saltBytes[i] = nn[i] ^ sn[i];
+      for (let i = 0; i < 8; i++) saltBytes[i] = nn[i]! ^ sn[i]!;
       const serverSalt = new TLReader(saltBytes).readLong();
       session.serverSalt = serverSalt;
       session.setAuthKey(authKeyBytes);
+      zeroize(bBytes); // the private DH exponent is no longer needed
       return { authKey: authKeyBytes, serverSalt };
     }
     if (dhAnswer.name === 'dh_gen_retry') {

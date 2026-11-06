@@ -32,9 +32,9 @@ export function ige256Encrypt(data: Uint8Array, key: Uint8Array, iv: Uint8Array)
   const out = Buffer.alloc(data.length);
   const block = Buffer.alloc(16);
   for (let off = 0; off < data.length; off += 16) {
-    for (let i = 0; i < 16; i++) block[i] = data[off + i] ^ prevCipher[i];
+    for (let i = 0; i < 16; i++) block[i] = data[off + i]! ^ prevCipher[i]!;
     const encrypted = cipher.update(block) as Buffer;
-    for (let i = 0; i < 16; i++) out[off + i] = encrypted[i] ^ prevPlain[i];
+    for (let i = 0; i < 16; i++) out[off + i] = encrypted[i]! ^ prevPlain[i]!;
     out.subarray(off, off + 16).copy(prevCipher);
     prevPlain.set(data.subarray(off, off + 16));
   }
@@ -52,9 +52,9 @@ export function ige256Decrypt(data: Uint8Array, key: Uint8Array, iv: Uint8Array)
   const out = Buffer.alloc(data.length);
   const block = Buffer.alloc(16);
   for (let off = 0; off < data.length; off += 16) {
-    for (let i = 0; i < 16; i++) block[i] = data[off + i] ^ prevPlain[i];
+    for (let i = 0; i < 16; i++) block[i] = data[off + i]! ^ prevPlain[i]!;
     const decrypted = decipher.update(block) as Buffer;
-    for (let i = 0; i < 16; i++) out[off + i] = decrypted[i] ^ prevCipher[i];
+    for (let i = 0; i < 16; i++) out[off + i] = decrypted[i]! ^ prevCipher[i]!;
     out.subarray(off, off + 16).copy(prevPlain);
     prevCipher.set(data.subarray(off, off + 16));
   }

@@ -35,7 +35,7 @@ export function randomInt(maxExclusive: number): number {
  */
 export function randomLong(): bigint {
   const buf = randomBytes(8);
-  buf[7] &= 0x7f;
+  buf[7] = (buf[7] ?? 0) & 0x7f;
   return buf.readBigInt64LE(0);
 }
 
@@ -67,10 +67,12 @@ export function hexToBytes(hex: string): Uint8Array {
   const s = hex.startsWith('0x') || hex.startsWith('0X') ? hex.slice(2) : hex;
   if (s.length % 2 !== 0) throw new TypeError('hex string must have even length');
   const out = new Uint8Array(s.length / 2);
+  const DIGITS = '0123456789abcdef';
   for (let i = 0; i < out.length; i++) {
-    const v = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-    if (Number.isNaN(v)) throw new TypeError(`invalid hex digit at ${i * 2}`);
-    out[i] = v;
+    const hi = DIGITS.indexOf(s[i * 2]!.toLowerCase());
+    const lo = DIGITS.indexOf(s[i * 2 + 1]!.toLowerCase());
+    if (hi < 0 || lo < 0) throw new TypeError(`invalid hex digit at ${i * 2}`);
+    out[i] = (hi << 4) | lo;
   }
   return out;
 }
@@ -101,6 +103,6 @@ export function bytesFromBigBE(value: bigint, length?: number): Uint8Array {
 export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
   return diff === 0;
 }

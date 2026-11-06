@@ -82,7 +82,7 @@ export class Media {
         id: photo.args.id as bigint,
         access_hash: photo.args.access_hash as bigint,
         file_reference: photo.args.file_reference as Uint8Array,
-        thumb_size: '',
+        thumb_size: pickPhotoSize(photo),
       }),
     );
   }
@@ -127,4 +127,24 @@ export class Media {
     }
     return out;
   }
+}
+
+/**
+ * Pick the largest downloadable size type from photo.sizes. `photoSize`
+ * (type,w,h,size) and `photoSizeProgressive` carry real bytes;
+ * `photoStrippedSize` (inline JPEG) and `photoSizeEmpty` do not.
+ */
+function pickPhotoSize(photo: TLObject): string {
+  const sizes = (photo.args.sizes as TLObject[]) ?? [];
+  let best: { type: string; area: number } | null = null;
+  for (const s of sizes) {
+    if (s.name === 'photoSize' || s.name === 'photoSizeProgressive') {
+      const w = (s.args.w as number) ?? 0;
+      const h = (s.args.h as number) ?? 0;
+      const area = w * h;
+      if (!best || area > best.area) best = { type: s.args.type as string, area };
+    }
+  }
+  if (!best) throw new Error('photo has no downloadable size');
+  return best.type;
 }

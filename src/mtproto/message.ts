@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { TLReader, TLWriter } from '../binary.js';
 import { ige256Decrypt, ige256Encrypt } from '../crypto/ige.js';
-import { secureRandom } from '../utils.js';
+import { randomInt, secureRandom } from '../utils.js';
 import type { MTProtoSession } from './session.js';
 
 function sha256(bytes: Uint8Array): Buffer {
@@ -102,10 +102,14 @@ export function packEncryptedMessage(
   w.writeUint(session.nextSeqNo(content));
   w.writeUint(body.length);
   w.writeRaw(body);
-  // padding: 12..1024 random bytes so the total length is a multiple of 16
+  // padding: 12..1024 random bytes so the total length is a multiple of 16.
+  // The length is randomized (not the deterministic minimum) to leak less
+  // structure about the payload.
   const fixed = 32 + body.length; // internal header (16) + msg_id/seq/len (16) + data
-  let pad = 12;
+  const minPad = 12;
+  let pad = minPad;
   while ((fixed + pad) % 16 !== 0) pad += 1;
+  pad += 16 * randomInt(64); // 0..63 extra blocks, still within the 1024-byte cap
   w.writeRaw(secureRandom(pad));
   const plaintext = w.toBuffer();
 

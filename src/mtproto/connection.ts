@@ -43,27 +43,41 @@ export class MTProtoConnection {
     this.transport = createTransport(options.transport ?? 'intermediate');
   }
 
-  /** Connect, send the transport hello, and start reading. */
+  /** Whether the socket is currently connected. */
+  get isConnected(): boolean {
+    return this.connected;
+  }
+
+  /** Connect, send the transport hello, and start reading. Idempotent. */
   connect(): Promise<void> {
+    if (this.connected && this.socket) return Promise.resolve();
+    this.close(); // drop any half-open previous socket first
     const { host, port = 443, connectTimeoutMs = 15000 } = this.options;
     return new Promise<void>((resolve, reject) => {
       const socket = new Socket();
       socket.setNoDelay(true);
+      let settled = false;
       const fail = (err: Error): void => {
+        if (settled) return;
+        settled = true;
         this.failWaiters(err);
         socket.destroy();
         reject(err);
       };
       const timer = setTimeout(() => fail(new Error(`connect timeout to ${host}:${port}`)), connectTimeoutMs);
-      socket.once('error', (err) => {
+      // persistent 'error' listener: a one-shot listener would leave later
+      // errors unhandled and crash the process
+      socket.on('error', (err) => {
         clearTimeout(timer);
-        if (!this.connected) {
+        if (!this.connected || this.socket !== socket) {
           fail(err instanceof Error ? err : new Error(String(err)));
         } else {
           this.handleError(err instanceof Error ? err : new Error(String(err)));
         }
       });
       socket.connect(port, host, () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         this.socket = socket;
         this.connected = true;
@@ -76,6 +90,7 @@ export class MTProtoConnection {
           }
         });
         socket.once('close', () => {
+          if (this.socket !== socket) return;
           this.connected = false;
           this.socket = null;
           this.failWaiters(new Error('connection closed'));
@@ -107,9 +122,13 @@ export class MTProtoConnection {
   }
 
   close(): void {
-    this.socket?.destroy();
+    const sock = this.socket;
     this.socket = null;
     this.connected = false;
+    sock?.destroy();
+    // the socket 'close' handler is skipped for user-initiated closes
+    // (socket identity no longer matches), so fail the waiters here
+    this.failWaiters(new Error('connection closed'));
   }
 
   private deliver(payload: Uint8Array): void {

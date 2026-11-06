@@ -6,7 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { randomLong, secureRandom } from '../utils.js';
+import { randomLong } from '../utils.js';
 
 /** Session state for one client-server connection. */
 export class MTProtoSession {
@@ -61,7 +61,10 @@ export class MTProtoSession {
     const nowMs = (Date.now() + this.timeOffset * 1000) / 1000;
     const seconds = Math.floor(nowMs);
     const fraction = nowMs - seconds;
-    let low = Math.floor(fraction * 0x100000000) & 0xfffffffc;
+    // `>>> 0` is essential: the & coercion is int32-signed, so without the
+    // unsigned shift every fraction >= 0.5 wraps negative and the assembled
+    // msg_id collapses to epoch-1970 values.
+    let low = (Math.floor(fraction * 0x100000000) & 0xfffffffc) >>> 0;
     if (low === 0) low = 4;
     let msgId = (BigInt(seconds) << 32n) | BigInt(low);
     if (msgId <= this.lastMsgId) msgId = this.lastMsgId + 4n;

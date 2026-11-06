@@ -3,6 +3,10 @@
  * token and use `getMe` / `sendMessage` / `sendPhoto` / `getUpdates`
  * with Bot-API-shaped results.
  *
+ * Chat ids are plain numeric strings (the peer's Telegram id), so the value
+ * from an update can be fed straight back into `sendMessage` - it resolves
+ * through the client's entity cache.
+ *
  * @module
  */
 
@@ -10,7 +14,6 @@ import { loginBot } from '../client/auth-flows.js';
 import { TelegramClient } from '../client/telegram-client.js';
 import type { CachedEntity } from '../client/telegram-client.js';
 import type { FormattedText, ParseMode, TgFormatLike } from '../modules/formatting.js';
-import { toSendable } from '../modules/formatting.js';
 import type { TLObject } from '../tl/index.js';
 
 export interface BotApiInit {
@@ -28,6 +31,7 @@ export interface BotApiUser {
 }
 
 export interface BotApiChat {
+  /** The peer's Telegram id (numeric string, resolvable through the cache). */
   id: string;
   kind: 'user' | 'chat' | 'channel';
 }
@@ -40,6 +44,7 @@ export interface BotApiMessage {
 }
 
 export interface BotApiUpdate {
+  /** The Telegram message id when available (monotonic per chat), else a local counter. */
   update_id: number;
   message?: BotApiMessage;
 }
@@ -54,13 +59,16 @@ export interface BotSendMessageOptions {
 /** Bot-API-like surface implemented over MTProto. */
 export class BotApi {
   private updateQueue: BotApiUpdate[] = [];
-  private nextUpdateId = 1;
+  private nextLocalUpdateId = 1;
 
   /** Wrap an already-connected (and bot-logged-in) client. */
   constructor(readonly client: TelegramClient) {
     this.client.updates.onMessage = (msg) => {
       const shaped = shapeMessage(msg);
-      if (shaped) this.updateQueue.push({ update_id: this.nextUpdateId++, message: shaped });
+      if (shaped) {
+        const telegramId = typeof msg.args.id === 'number' ? msg.args.id : this.nextLocalUpdateId++;
+        this.updateQueue.push({ update_id: telegramId, message: shaped });
+      }
     };
   }
 
@@ -101,8 +109,7 @@ export class BotApi {
       replyTo: options.reply_to_message_id,
       linkPreview: options.disable_web_page_preview !== true,
     });
-    const sent = extractSentMessage(result);
-    const shaped = shapeMessage(sent);
+    const shaped = this.shapeSent(result, chat);
     if (!shaped) throw new Error('could not extract the sent message from the response');
     return shaped;
   }
@@ -118,15 +125,45 @@ export class BotApi {
       parseMode: options.parse_mode,
       replyTo: options.reply_to_message_id,
     });
-    const sent = extractSentMessage(result);
-    const shaped = shapeMessage(sent);
+    const shaped = this.shapeSent(result, chat);
     if (!shaped) throw new Error('could not extract the sent message from the response');
     return shaped;
+  }
+
+  /** Shape a send result, using the target peer for short replies-to-self. */
+  private shapeSent(result: TLObject, target: string | bigint | CachedEntity | TLObject): BotApiMessage | null {
+    const sent = extractSentMessage(result);
+    if (!sent) return null;
+    if (sent.name === 'updateShortSentMessage') {
+      // short confirmations (sending to self) carry no peer_id; use the target
+      const ent = this.entityOf(target);
+      if (!ent) return null;
+      return {
+        message_id: sent.args.id as number,
+        date: sent.args.date as number | undefined,
+        text: (sent.args.message as string | undefined) ?? '',
+        chat: { id: ent.id.toString(), kind: ent.kind },
+      };
+    }
+    return shapeMessage(sent);
+  }
+
+  private entityOf(target: string | bigint | CachedEntity | TLObject): CachedEntity | null {
+    if (typeof target === 'object' && target !== null && 'kind' in target) return target as CachedEntity;
+    if (typeof target === 'string' || typeof target === 'bigint') {
+      return this.client.entityCache.resolve(target.toString()) ?? null;
+    }
+    return null;
   }
 
   /** Start update polling (needed before getUpdates returns anything). */
   async start(pollIntervalMs = 5000): Promise<void> {
     await this.client.updates.start(pollIntervalMs);
+  }
+
+  /** Stop update polling. */
+  stop(): void {
+    this.client.updates.stop();
   }
 
   /** Drain queued updates (Bot-API style). */
@@ -152,11 +189,7 @@ function extractSentMessage(result: TLObject): TLObject | null {
 
 function shapeMessage(msg: TLObject | null): BotApiMessage | null {
   if (!msg) return null;
-  const peer = msg.args.peer_id as TLObject | undefined;
-  let chat: BotApiChat | null = null;
-  if (peer?.name === 'peerUser') chat = { id: `user:${(peer.args.user_id as bigint).toString()}`, kind: 'user' };
-  else if (peer?.name === 'peerChat') chat = { id: `chat:${(peer.args.chat_id as bigint).toString()}`, kind: 'chat' };
-  else if (peer?.name === 'peerChannel') chat = { id: `channel:${(peer.args.channel_id as bigint).toString()}`, kind: 'channel' };
+  const chat = shapeChat(msg);
   if (!chat) return null;
   return {
     message_id: msg.args.id as number,
@@ -164,4 +197,12 @@ function shapeMessage(msg: TLObject | null): BotApiMessage | null {
     text: (msg.args.message as string | undefined) ?? '',
     chat,
   };
+}
+
+function shapeChat(msg: TLObject): BotApiChat | null {
+  const peer = msg.args.peer_id as TLObject | undefined;
+  if (peer?.name === 'peerUser') return { id: (peer.args.user_id as bigint).toString(), kind: 'user' };
+  if (peer?.name === 'peerChat') return { id: (peer.args.chat_id as bigint).toString(), kind: 'chat' };
+  if (peer?.name === 'peerChannel') return { id: (peer.args.channel_id as bigint).toString(), kind: 'channel' };
+  return null;
 }

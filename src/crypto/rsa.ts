@@ -2,7 +2,8 @@
  * Telegram RSA helpers: the `RSA_PAD` construction used during the
  * auth-key handshake (core.telegram.org/mtproto/auth_key, section 4.1) and
  * the server-key lookup interface. The legacy MTProto 1.0 RSA padding is
- * also provided as a fallback; production servers accept both.
+ * also provided for automatic fallback against servers that still expect
+ * it; the current MTProto 2.0 documentation only specifies RSA_PAD.
  *
  * @module
  */
@@ -47,6 +48,11 @@ export function rsaPad(data: Uint8Array, key: TelegramRsaKey): Uint8Array {
   if (data.length === 0 || data.length > 144) {
     throw new RangeError(`RSA_PAD payload must be 1..144 bytes, got ${data.length}`);
   }
+  // the construction hard-codes 192/224/256-byte building blocks for a
+  // 2048-bit modulus; anything smaller always exceeds n and never terminates
+  if (key.n.length !== 256) {
+    throw new RangeError(`RSA_PAD requires a 2048-bit (256-byte) modulus, got ${key.n.length * 8} bits`);
+  }
   const modulus = bigFromBytesBE(key.n);
   const exponent = bigFromBytesBE(key.e);
   const zeroIv = new Uint8Array(32);
@@ -56,7 +62,7 @@ export function rsaPad(data: Uint8Array, key: TelegramRsaKey): Uint8Array {
     dataWithPadding.set(secureRandom(192 - data.length), data.length);
 
     const dataPadReversed = new Uint8Array(192);
-    for (let i = 0; i < 192; i++) dataPadReversed[i] = dataWithPadding[191 - i];
+    for (let i = 0; i < 192; i++) dataPadReversed[i] = dataWithPadding[191 - i]!;
 
     const tempKey = secureRandom(32);
     const hashInput = new Uint8Array(32 + 192);
@@ -71,7 +77,7 @@ export function rsaPad(data: Uint8Array, key: TelegramRsaKey): Uint8Array {
     const aesEncrypted = ige256Encrypt(dataWithHash, tempKey, zeroIv);
     const shaAes = sha256(aesEncrypted);
     const tempKeyXor = new Uint8Array(32);
-    for (let i = 0; i < 32; i++) tempKeyXor[i] = tempKey[i] ^ shaAes[i];
+    for (let i = 0; i < 32; i++) tempKeyXor[i] = tempKey[i]! ^ shaAes[i]!;
 
     const keyAesEncrypted = new Uint8Array(256);
     keyAesEncrypted.set(tempKeyXor, 0);
@@ -92,6 +98,10 @@ export function rsaPad(data: Uint8Array, key: TelegramRsaKey): Uint8Array {
 export function rsaPadLegacy(data: Uint8Array, key: TelegramRsaKey): Uint8Array {
   if (data.length === 0 || data.length > 144) {
     throw new RangeError(`RSA payload must be 1..144 bytes, got ${data.length}`);
+  }
+  // the fixed 255-byte payload assumes a 2048-bit modulus
+  if (key.n.length !== 256) {
+    throw new RangeError(`legacy RSA padding requires a 2048-bit (256-byte) modulus, got ${key.n.length * 8} bits`);
   }
   const modulus = bigFromBytesBE(key.n);
   const exponent = bigFromBytesBE(key.e);

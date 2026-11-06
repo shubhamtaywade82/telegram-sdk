@@ -1,11 +1,12 @@
 /**
  * Updates: initialization (updates.getState) and catch-up polling
- * (updates.getDifference), plus real-time dispatch of pushed updates.
+ * (updates.getDifference), plus real-time dispatch of pushed updates
+ * (containers, short forms included).
  *
  * @module
  */
 
-import { tlMethod, type TLObject } from '../tl/index.js';
+import { tl, tlMethod, type TLObject } from '../tl/index.js';
 import type { TelegramClient } from '../client/telegram-client.js';
 
 interface UpdateState {
@@ -19,8 +20,10 @@ interface UpdateState {
 export class Updates {
   private state: UpdateState | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private starting = false;
+  private stopped = true;
 
-  /** Incoming messages (new user/channel messages). */
+  /** Incoming messages (new user/channel messages and short forms). */
   onMessage: ((message: TLObject) => void) | null = null;
   /** All other updates. */
   onUpdate: ((update: TLObject) => void) | null = null;
@@ -31,12 +34,24 @@ export class Updates {
 
   /** Dispatch one pushed update (wired automatically by TelegramClient). */
   handleUpdate(update: TLObject): void {
+    // containers carry their own users/chats - warm the cache first
+    if (update.name === 'updates' || update.name === 'updatesCombined') {
+      this.client.entityCache.update(update.args.users, update.args.chats);
+      for (const u of (update.args.updates as TLObject[]) ?? []) this.handleUpdate(u);
+      return;
+    }
     if (update.name === 'updateNewMessage' || update.name === 'updateNewChannelMessage') {
       const msg = update.args.message as TLObject | undefined;
       if (msg) {
         this.client.entityCache.update(update.args.users, update.args.chats);
         this.onMessage?.(msg);
       }
+      return;
+    }
+    // short forms are messages without the full container; synthesize a
+    // message object so onMessage sees one shape
+    if (update.name === 'updateShortMessage' || update.name === 'updateShortChatMessage') {
+      this.onMessage?.(shortToMessage(update));
       return;
     }
     if (update.name === 'updatesTooLong') {
@@ -47,17 +62,27 @@ export class Updates {
     this.onUpdate?.(update);
   }
 
-  /** Start polling (initial catch-up + interval). */
+  /** Start polling (initial catch-up + interval). Concurrent calls coalesce. */
   async start(pollIntervalMs = 5000): Promise<void> {
+    if (this.starting) return; // the in-flight start() wins
     this.stop();
-    await this.catchUp();
-    this.timer = setInterval(() => {
-      void this.catchUp();
-    }, pollIntervalMs);
-    this.timer.unref?.();
+    this.stopped = false;
+    this.starting = true;
+    try {
+      await this.catchUp();
+      if (!this.stopped) {
+        this.timer = setInterval(() => {
+          void this.catchUp();
+        }, pollIntervalMs);
+        this.timer.unref?.();
+      }
+    } finally {
+      this.starting = false;
+    }
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -74,7 +99,8 @@ export class Updates {
           date: s.args.date as number,
           seq: s.args.seq as number,
         };
-        return;
+        // fall through: fetch the difference immediately instead of
+        // delaying the first poll by a full interval
       }
       const diff = await this.client.invoke<TLObject>(
         tlMethod('updates.getDifference', {
@@ -104,4 +130,27 @@ export class Updates {
       this.onError?.(err instanceof Error ? err : new Error(String(err)));
     }
   }
+}
+
+/** Build a `message`-shaped object from an updateShort*Message. */
+function shortToMessage(update: TLObject): TLObject {
+  const base = {
+    id: update.args.id,
+    date: update.args.date,
+    message: update.args.message,
+    out: update.args.out === true,
+  };
+  if (update.name === 'updateShortChatMessage') {
+    // updateShortChatMessage: from_id:long + chat_id:long
+    return tl('message', {
+      ...base,
+      peer_id: tl('peerChat', { chat_id: update.args.chat_id }),
+      from_id: tl('peerUser', { user_id: update.args.from_id }),
+    });
+  }
+  // updateShortMessage: user_id:long (the conversation partner)
+  return tl('message', {
+    ...base,
+    peer_id: tl('peerUser', { user_id: update.args.user_id }),
+  });
 }

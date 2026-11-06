@@ -46,6 +46,9 @@ export class TLWriter {
 
   /** 32-bit signed int, little-endian. */
   writeInt(value: number): this {
+    if (!Number.isSafeInteger(value) || value < -0x80000000 || value > 0x7fffffff) {
+      throw new RangeError(`int out of 32-bit range: ${value}`);
+    }
     const buf = Buffer.alloc(4);
     buf.writeInt32LE(value | 0, 0);
     return this.push(buf);
@@ -53,6 +56,9 @@ export class TLWriter {
 
   /** 32-bit unsigned int, little-endian. */
   writeUint(value: number): this {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+      throw new RangeError(`uint out of 32-bit range: ${value}`);
+    }
     const buf = Buffer.alloc(4);
     buf.writeUInt32LE(value >>> 0, 0);
     return this.push(buf);
@@ -88,6 +94,10 @@ export class TLWriter {
   /** TL `string`/`bytes`: length-prefixed, zero-padded to a multiple of 4. */
   writeBytes(bytes: Uint8Array): this {
     const len = bytes.length;
+    // the 3-byte long-form length field cannot carry 2^24 or more
+    if (len >= 0x1000000) {
+      throw new RangeError(`TL string/bytes too large: ${len} bytes (max 2^24-1)`);
+    }
     if (len < 254) {
       const header = Buffer.from([len]);
       const pad = (4 - ((1 + len) % 4)) % 4;
@@ -162,7 +172,7 @@ export class TLReader {
 
   /** One byte. */
   readByte(): number {
-    return this.buffer[this.need(1, 'byte')];
+    return this.buffer[this.need(1, 'byte')]!;
   }
 
   /** 32-bit signed int, little-endian. */
@@ -230,7 +240,7 @@ export class TLReader {
   private static assembleLE(buf: Buffer, start: number, size: number): bigint {
     let v = 0n;
     for (let i = size - 1; i >= 0; i--) {
-      v = (v << 8n) | BigInt(buf[start + i]);
+      v = (v << 8n) | BigInt(buf[start + i]!);
     }
     return v;
   }
