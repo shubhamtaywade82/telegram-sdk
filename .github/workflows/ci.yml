@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck (src + tests, strict)
         run: npm run typecheck
 
+      - name: Bot API generated sources are up to date
+        run: npm run check:botapi
+
       - name: Typecheck examples
         run: npx tsc -p tsconfig.examples.json
 

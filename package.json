@@ -49,7 +49,10 @@
     "test:live": "npm run build && MTPROTO_LIVE=1 node --test dist/tests/live.test.js",
     "docs": "typedoc",
     "prepublishOnly": "npm test",
-    "extract:rsa": "node scripts/extract-rsa-keys.mjs"
+    "extract:rsa": "node scripts/extract-rsa-keys.mjs",
+    "fetch:botapi": "node scripts/fetch-botapi.mjs",
+    "generate:botapi": "node scripts/generate-botapi.mjs",
+    "check:botapi": "node scripts/generate-botapi.mjs --check"
   },
   "peerDependencies": {
     "@nemesis-oss/tg-format": ">=0.1.0"

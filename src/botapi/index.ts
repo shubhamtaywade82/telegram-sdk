@@ -1,0 +1,10 @@
+export { BotApiHttpClient } from './generated/client.js';
+export { BotApiTransport } from './transport.js';
+export type { BotApiClientOptions } from './transport.js';
+export { BotApiHttpError } from './errors.js';
+export { isInputFile } from './input-file.js';
+export type { InputFile, InputFileSource, NamedInputFile } from './input-file.js';
+export type { BotApiMethodMap, BotApiMethodName, EmptyParams } from './generated/methods.js';
+export { BOT_API_VERSION } from './generated/methods.js';
+export * as BotApiTypes from './generated/types.js';
+export type * from './generated/methods.js';

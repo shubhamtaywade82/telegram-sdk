@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `BotApiHttpClient`: typed client for the HTTPS Bot API, generated from a committed snapshot of
+  the Bot API 10.3 documentation (400 types, 185 methods). Multipart uploads, nested `attach://`
+  files, rate-limit handling, and token-safe errors (`BotApiHttpError`).
+- Generator tooling: `npm run fetch:botapi`, `npm run generate:botapi`, `npm run check:botapi`
+  (the last runs in CI and fails on stale generated sources).
+- Documentation: `docs/bot-api-generator.md`.
+
 ## [0.2.0] - 2026-11-06
 
 Follow-up to the end-to-end engineering review of 0.1.0: all six critical findings, the

@@ -47,3 +47,4 @@ export type { SendMediaOptions } from './modules/media.js';
 export { Updates } from './modules/updates.js';
 export { BotApi } from './bot/bot-api.js';
 export type { BotApiInit, BotApiUser, BotApiChat, BotApiMessage, BotApiUpdate, BotSendMessageOptions } from './bot/bot-api.js';
+export * from './botapi/index.js';

@@ -134,6 +134,20 @@ for (const update of bot.getUpdates()) {
 // const bot = new BotApi(existingClient);
 ```
 
+## Typed Bot API client (HTTPS), Bot API 10.3
+
+`BotApiHttpClient` calls `https://api.telegram.org` directly. Every one of the 185 methods and 400
+objects of Bot API 10.3 is generated from a committed documentation snapshot, with exact parameter
+and result types. Retries follow Telegram's guidance: 429 is always honoured, and send methods are
+never repeated after an ambiguous failure. See [docs/bot-api-generator.md](docs/bot-api-generator.md).
+
+```ts
+import { BotApiHttpClient } from 'mtproto-sdk';
+
+const bot = new BotApiHttpClient({ token: process.env.BOT_TOKEN! });
+await bot.sendMessage({ chat_id: 42, text: 'deployed' });
+```
+
 ## Features
 
 ### Messaging — `client.messaging`
