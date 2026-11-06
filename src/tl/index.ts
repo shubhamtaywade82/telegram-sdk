@@ -1,8 +1,9 @@
 /**
  * Dynamic TL layer: a schema-driven object model that serializes and parses
- * ANY constructor or method of the loaded layer. The generated data file
- * (`schema-all.ts`, built by `scripts/codegen.ts` from the official
- * `schema.json`) registers the full Layer here at import time.
+ * ANY constructor or method of the loaded layer. The generated data files
+ * (`schema-all.ts` / `schema-core.ts`, built by `scripts/codegen.mjs` from
+ * the pinned TL schemas `src/tl/api.tl` and `src/tl/core.tl`) register the
+ * full Layer here at import time.
  *
  * @module
  */

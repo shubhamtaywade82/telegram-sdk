@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Peer resolution**: cached chats now resolve by id — `inputPeerChat` needs no access hash, but
+  the resolver demanded one for every entity kind; users/channels still require it.
+- **RPC salt handling**: `bad_server_salt` service messages now update the session salt and fail
+  the affected request with a clear retryable error; `new_session_created` salt rotations are
+  adopted in place.
+- **2FA detection** in `loginUser` now matches `TelegramRpcError.telegramMessage` exactly instead
+  of substring-matching the error text.
+- README: `FLOOD_WAIT` example used `===` against a message that is always suffixed
+  (`FLOOD_WAIT_30`); live-test command reference now matches the `test:live` script.
+
+### Added
+
+- `silent` option on `sendMessage` (schema flag `flags.5?true`, previously documented but missing).
+- Regression tests: offline peer resolution (chat/user/channel), `bad_server_salt` rotation.
+
+### Changed
+
+- CI: least-privilege `permissions` and PR-run concurrency cancellation.
+- TypeDoc output now carries the package name and version.
+
 ## [0.1.0] - 2026-11-04
 
 Initial release.

@@ -204,7 +204,7 @@ const result = await client.invoke(
 try {
   await client.messaging.sendMessage(peer, 'hi');
 } catch (err) {
-  if (err instanceof TelegramRpcError && err.telegramMessage === 'FLOOD_WAIT') {
+  if (err instanceof TelegramRpcError && err.telegramMessage.startsWith('FLOOD_WAIT')) {
     await sleep((err.waitSeconds() ?? 1) * 1000);
   }
 }
@@ -225,7 +225,10 @@ Transports: `'abridged' | 'intermediate' | 'full'` (default `intermediate`), sel
   and `x = 8` server→client.
 - **msg_id** is `unixtime << 32 | fraction`, divisible by 4, strictly monotonic; server time
   offset is learned during the handshake. Content messages get odd `seq_no`.
-- The **live handshake test** (`MTPROTO_LIVE=1 npm test`) performs a real key exchange with
+- **Server salt rotations** are tracked automatically: `new_session_created` updates the session
+  salt in place, and `bad_server_salt` adopts the new salt and fails the affected request with a
+  clear "retry the request" error.
+- The **live handshake test** (`MTPROTO_LIVE=1 npm run test:live`) performs a real key exchange with
   Telegram DC2 and is the ultimate conformance check.
 
 ## Development
@@ -250,6 +253,7 @@ npm run docs        # TypeDoc API reference -> docs/api
 | TL runtime | flags round-trips, vectors, nested entities, gzip transparency, error cases |
 | Transports | abridged (incl. 0x7f escape + split chunks), intermediate, full (+CRC tamper + IEEE check-value vector) |
 | Messages | unencrypted/encrypted packing, x=0/x=8 key schedules, seq_no progression |
+| RPC | rpc_result/containers, `bad_server_salt` salt rotation + retryable failure |
 | Handshake | full mock-server exchange, new+legacy RSA, unknown-fingerprint failure |
 | Login | end-to-end encrypted RPC login incl. 2FA against a mock server; session round-trip |
 | Live | real auth-key handshake with production DC2 (opt-in) |
