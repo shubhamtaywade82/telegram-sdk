@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch: # enables the manual live-conformance job below
 
 permissions:
   contents: read
