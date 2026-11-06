@@ -35,6 +35,11 @@ Define an internal interface in this repository (for example, connect, authorize
 - User-account/full Telegram client: prefer an optional teleproto adapter after the validation gate; choose TDLib if official-client parity is more important than a pure TypeScript deployment.
 - Custom implementation: defer until a measurable requirement justifies owning the cryptographic and protocol surface.
 
+> **Status (2026-11-06, v0.2.0):** The review follow-up landed: protocol-constant pinning,
+> msg_id conformance, the documented full-transport framing, `current_algo` 2FA, Vector RPC
+> results, transparent salt resends, reconnection and DC migration, atomic+user-preserving
+> sessions, and 55 offline tests with independent mocks. This document is historical.
+
 ## Update (2026-11-04)
 
 The validation gate above was executed. Outcome: the clean-room, from-spec MTProto

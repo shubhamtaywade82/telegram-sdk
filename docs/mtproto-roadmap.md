@@ -1,5 +1,10 @@
 # MTProto implementation roadmap
 
+> **Status (2026-11-06, v0.2.0):** The review follow-up landed: protocol-constant pinning,
+> msg_id conformance, the documented full-transport framing, `current_algo` 2FA, Vector RPC
+> results, transparent salt resends, reconnection and DC migration, atomic+user-preserving
+> sessions, and 55 offline tests with independent mocks. This document is historical.
+
 > **Status (2026-11-04):** The scope gate has been satisfied. Phases 0–4 are implemented and
 > tested in this repository — TL runtime with the pinned Layer 232 schema, AES-IGE / RSA_PAD /
 > DH / SRP crypto, transports and the auth-key handshake, RPC with sessions and persistence,

@@ -1,0 +1,42 @@
+name: Publish
+
+# Manual npm publish with provenance. Requires an NPM_TOKEN secret
+# (Automation type) and does nothing until triggered from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'npm dist-tag (latest or next)'
+        required: false
+        default: latest
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: publish
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Verify the working tree is clean after build artifacts
+        run: npm run build
+
+      - name: Full test suite (offline)
+        run: node --test dist/tests/*.test.js
+        timeout-minutes: 5
+
+      - name: Pack and publish
+        run: npm publish --provenance --access public --tag ${{ github.event.inputs.tag || 'latest' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

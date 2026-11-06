@@ -1,5 +1,10 @@
 # Architecture
 
+> **Status (2026-11-06, v0.2.0):** All findings of the end-to-end engineering review are
+> applied. The npm package is named **mtproto-sdk** (the repository keeps the name
+> `telegram-sdk`); the package-boundary sketch below predates the implementation and is
+> kept for history — see the "Update" section for what actually shipped.
+
 ## Design rules
 
 1. Bot API and MTProto remain separate protocols.

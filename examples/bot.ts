@@ -30,7 +30,10 @@ try {
     for (const update of bot.getUpdates()) {
       if (update.message?.text) {
         console.log(`[${update.message.chat.id}] ${update.message.text}`);
-        void bot.sendMessage(update.message.chat.id, `echo: ${update.message.text}`);
+        // await + handle: a swallowed rejection would kill the process
+        bot
+          .sendMessage(update.message.chat.id, `echo: ${update.message.text}`)
+          .catch((err) => console.error('echo failed:', err instanceof Error ? err.message : err));
       }
     }
   }, 500);

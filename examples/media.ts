@@ -4,16 +4,17 @@
  *   API_ID=12345 API_HASH=... npx tsx examples/media.ts
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { TelegramClient, loginUser, saveSession, loadSession } from '../src/index.js';
+import { TelegramClient, loginUser, saveSession, loadSessionFile } from '../src/index.js';
 
 const apiId = Number(process.env.API_ID ?? 12345);
 const apiHash = process.env.API_HASH ?? '0123456789abcdef0123456789abcdef';
 const SESSION_FILE = 'examples/session.json';
 
+const sessionResult = loadSessionFile(SESSION_FILE);
 const client = new TelegramClient({
   apiId,
   apiHash,
-  session: loadSession(SESSION_FILE) ?? undefined,
+  session: sessionResult.status === 'ok' ? sessionResult.data : undefined,
 });
 
 try {

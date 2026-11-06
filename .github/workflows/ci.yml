@@ -31,8 +31,11 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Typecheck
+      - name: Typecheck (src + tests, strict)
         run: npm run typecheck
+
+      - name: Typecheck examples
+        run: npx tsc -p tsconfig.examples.json
 
       - name: Build
         run: npm run build
@@ -45,11 +48,16 @@ jobs:
         if: matrix.node-version == 22
         run: npm run docs
 
-  live-handshake:
-    # The real end-to-end check: a full auth-key handshake with a production
-    # Telegram datacenter. No account needed (the handshake is pre-auth).
+  live-conformance:
+    # The real end-to-end check against production Telegram: a full auth-key
+    # handshake AND one encrypted RPC round-trip through the whole client
+    # (invokeWithLayer(initConnection(updates.getState))). No account needed -
+    # the expected pre-login answer is an rpc_error (AUTH_KEY_UNREGISTERED),
+    # which still proves the entire encrypted request/response cycle.
+    # Manual-only (network-dependent, rate-limit friendly): run it from the
+    # Actions tab. It FAILS the job on error - no silent continue-on-error.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

@@ -5,7 +5,7 @@
  *   API_ID=12345 API_HASH=... npx tsx examples/user-login.ts
  */
 import * as readline from 'node:readline/promises';
-import { TelegramClient, loginUser, saveSession, loadSession } from '../src/index.js';
+import { TelegramClient, loginUser, saveSession, loadSessionFile } from '../src/index.js';
 
 const apiId = Number(process.env.API_ID ?? 12345);
 const apiHash = process.env.API_HASH ?? '0123456789abcdef0123456789abcdef';
@@ -13,10 +13,15 @@ const SESSION_FILE = 'examples/session.json';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
+// distinguish a missing session (fresh login) from a corrupt one
+const sessionResult = loadSessionFile(SESSION_FILE);
+if (sessionResult.status === 'corrupt') {
+  console.warn(`warning: ${SESSION_FILE} is corrupt (${sessionResult.error}); logging in again`);
+}
 const client = new TelegramClient({
   apiId,
   apiHash,
-  session: loadSession(SESSION_FILE) ?? undefined,
+  session: sessionResult.status === 'ok' ? sessionResult.data : undefined,
 });
 
 try {
