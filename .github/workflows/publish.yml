@@ -1,7 +1,8 @@
 name: Publish
 
-# Manual npm publish with provenance. Requires an NPM_TOKEN secret
-# (Automation type) and does nothing until triggered from the Actions tab.
+# Manual npm publish with provenance via npm trusted publishing (OIDC). No npm
+# token is used. The trusted-publisher entry on npmjs.com must name `publish.yml`
+# with environment `publish`. Runs only when triggered from the Actions tab.
 on:
   workflow_dispatch:
     inputs:
@@ -25,9 +26,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
 
-      - run: npm ci
+      - name: Pin npm for trusted publishing
+        run: npm install -g npm@^11.21.0
+
+      - run: npm ci --ignore-scripts
 
       - name: Verify the working tree is clean after build artifacts
         run: npm run build
@@ -36,7 +39,12 @@ jobs:
         run: node --test dist/tests/*.test.js
         timeout-minutes: 5
 
-      - name: Pack and publish
-        run: npm publish --provenance --access public --tag ${{ github.event.inputs.tag || 'latest' }}
+      # The package's prepublishOnly is `npm test`. --ignore-scripts skips it,
+      # so the same gate runs here, before the publish.
+      - name: Package test gate (prepublishOnly equivalent)
+        run: npm test
+
+      - name: Pack and publish (trusted publishing)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ github.event.inputs.tag || 'latest' }}
+        run: npm publish --provenance --access public --tag "$NPM_DIST_TAG" --ignore-scripts
