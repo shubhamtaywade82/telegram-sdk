@@ -1,23 +1,25 @@
 name: Publish
 
-# Manual npm publish with provenance via npm trusted publishing (OIDC). No npm
-# token is used. The trusted-publisher entry on npmjs.com must name `publish.yml`
-# with environment `publish`. Runs only when triggered from the Actions tab.
+# Called by release-please.yml only. That file must be the trusted-publisher
+# entry on npmjs.com, because trusted publishing validates the calling workflow.
+# Publishes with npm trusted publishing (OIDC): no npm token is used.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
-        description: 'npm dist-tag (latest or next)'
+        description: 'npm dist-tag to publish under'
         required: false
-        default: latest
+        type: string
+        default: 'latest'
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm trusted publishing and provenance
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Trusted-publisher environment on npmjs.com must be `publish`.
     environment: publish
     steps:
       - uses: actions/checkout@v4
@@ -30,9 +32,19 @@ jobs:
       - name: Pin npm for trusted publishing
         run: npm install -g npm@^11.21.0
 
+      - name: Validate dist-tag
+        env:
+          NPM_DIST_TAG: ${{ inputs.tag || 'latest' }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$NPM_DIST_TAG" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+            echo "::error::Invalid npm dist-tag '$NPM_DIST_TAG'. Refusing to publish."
+            exit 1
+          fi
+
       - run: npm ci --ignore-scripts
 
-      - name: Verify the working tree is clean after build artifacts
+      - name: Build
         run: npm run build
 
       - name: Full test suite (offline)
@@ -46,5 +58,5 @@ jobs:
 
       - name: Pack and publish (trusted publishing)
         env:
-          NPM_DIST_TAG: ${{ github.event.inputs.tag || 'latest' }}
+          NPM_DIST_TAG: ${{ inputs.tag || 'latest' }}
         run: npm publish --provenance --access public --tag "$NPM_DIST_TAG" --ignore-scripts
